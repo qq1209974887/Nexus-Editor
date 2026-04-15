@@ -75,6 +75,12 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/plugin-search:
+    dependencies:
+      '@nexus/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/plugin-slash:
     dependencies:
       '@nexus/core':
