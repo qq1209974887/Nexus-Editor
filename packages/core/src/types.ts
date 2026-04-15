@@ -1,9 +1,34 @@
 import type { Extension } from "@codemirror/state";
-import type { Root } from "mdast";
+import type { Blockquote, Heading, Image, InlineCode, Link, Root, Strong, Emphasis } from "mdast";
 import type { Plugin } from "unified";
 
 export interface ParserLike {
   parse(markdown: string): Root;
+}
+
+export type LivePreviewNode =
+  | Blockquote
+  | Emphasis
+  | Heading
+  | Image
+  | InlineCode
+  | Link
+  | Strong;
+
+export type LivePreviewNodeType = LivePreviewNode["type"];
+
+export interface LivePreviewRenderContext {
+  node: LivePreviewNode;
+  nodeType: LivePreviewNodeType;
+  source: string;
+  text: string;
+}
+
+export type LivePreviewRenderer = (context: LivePreviewRenderContext) => HTMLElement;
+
+export interface LivePreviewConfig {
+  enabled?: boolean;
+  renderers?: Partial<Record<LivePreviewNodeType, LivePreviewRenderer>>;
 }
 
 export interface EditorConfig {
@@ -11,6 +36,7 @@ export interface EditorConfig {
   initialValue?: string;
   parser?: ParserLike;
   parseDelayMs?: number;
+  livePreview?: boolean | LivePreviewConfig;
   plugins?: NexusPlugin[];
   onChange?: (doc: string, ast: Root) => void;
   onFocus?: () => void;
@@ -23,6 +49,7 @@ export interface EditorAPI {
   getAst(): Root;
   getSlashCommands(): SlashCommandDef[];
   uploadAsset(file: File): Promise<string | null>;
+  setSelection(anchor: number, head?: number): void;
   setDocument(next: string): void;
   focus(): void;
   blur(): void;

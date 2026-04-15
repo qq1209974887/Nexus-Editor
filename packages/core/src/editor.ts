@@ -4,6 +4,7 @@ import type { Root } from "mdast";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
+import { createLivePreviewExtension } from "./live-preview";
 import type { EditorAPI, EditorConfig, NexusPlugin, ParserLike } from "./types";
 
 function createEmptyAst(): Root {
@@ -124,6 +125,7 @@ export function createEditor(config: EditorConfig): EditorAPI {
             scheduleChange(update.state.doc.toString());
           }
         }),
+        ...createLivePreviewExtension(parser, config.livePreview),
         ...shortcutExtensions,
         ...cmExtensions
       ]
@@ -146,6 +148,15 @@ export function createEditor(config: EditorConfig): EditorAPI {
       }
 
       return config.onAssetUpload(file);
+    },
+    setSelection(anchor, head = anchor) {
+      if (destroyed) {
+        return;
+      }
+
+      view.dispatch({
+        selection: { anchor, head }
+      });
     },
     setDocument(next) {
       if (destroyed) {

@@ -24,7 +24,7 @@
 - Create: `packages/core/src/editor.ts`
 - Create: `packages/core/test/editor.test.ts`
 
-- [ ] **Step 1: Write the failing workspace smoke test**
+- [x] **Step 1: Write the failing workspace smoke test**
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -41,12 +41,12 @@ describe("createEditor", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm exec vitest run packages/core/test/editor.test.ts`
 Expected: FAIL because the workspace and exported editor factory do not exist yet
 
-- [ ] **Step 3: Write minimal workspace scaffolding and editor factory**
+- [x] **Step 3: Write minimal workspace scaffolding and editor factory**
 
 ```ts
 export interface EditorConfig {
@@ -78,12 +78,12 @@ export function createEditor(config: EditorConfig): EditorAPI {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm exec vitest run packages/core/test/editor.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add package.json pnpm-workspace.yaml tsconfig.base.json vitest.config.ts packages/core/package.json packages/core/tsconfig.json packages/core/src/index.ts packages/core/src/types.ts packages/core/src/editor.ts packages/core/test/editor.test.ts
@@ -98,7 +98,7 @@ git commit -m "feat: scaffold core editor workspace"
 - Modify: `packages/core/src/index.ts`
 - Modify: `packages/core/test/editor.test.ts`
 
-- [ ] **Step 1: Write the failing document and lifecycle tests**
+- [x] **Step 1: Write the failing document and lifecycle tests**
 
 ```ts
 it("emits change, focus, and blur hooks with canonical document values", () => {
@@ -130,12 +130,12 @@ it("emits change, focus, and blur hooks with canonical document values", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm exec vitest run packages/core/test/editor.test.ts -t "emits change, focus, and blur hooks with canonical document values"`
 Expected: FAIL because focus, blur, and setDocument behavior are not implemented
 
-- [ ] **Step 3: Write minimal lifecycle and mutation behavior**
+- [x] **Step 3: Write minimal lifecycle and mutation behavior**
 
 ```ts
 export interface EditorConfig {
@@ -169,12 +169,12 @@ blur() {
 },
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm exec vitest run packages/core/test/editor.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/types.ts packages/core/src/editor.ts packages/core/src/index.ts packages/core/test/editor.test.ts
@@ -189,7 +189,7 @@ git commit -m "feat: add core document lifecycle hooks"
 - Modify: `packages/core/src/editor.ts`
 - Modify: `packages/core/test/editor.test.ts`
 
-- [ ] **Step 1: Write the failing AST tests**
+- [x] **Step 1: Write the failing AST tests**
 
 ```ts
 it("emits a parsed AST for the current markdown document", () => {
@@ -233,12 +233,12 @@ it("keeps the editor usable when the parser throws", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm exec vitest run packages/core/test/editor.test.ts -t "AST"`
 Expected: FAIL because AST parsing and parser injection do not exist
 
-- [ ] **Step 3: Write minimal parsing support**
+- [x] **Step 3: Write minimal parsing support**
 
 ```ts
 import { unified } from "unified";
@@ -261,12 +261,12 @@ function parseDocument(parser: ParserLike, markdown: string, fallback: Root): Ro
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm exec vitest run packages/core/test/editor.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/package.json packages/core/src/types.ts packages/core/src/editor.ts packages/core/test/editor.test.ts
@@ -281,7 +281,7 @@ git commit -m "feat: add markdown ast pipeline"
 - Modify: `packages/core/src/index.ts`
 - Modify: `packages/core/test/editor.test.ts`
 
-- [ ] **Step 1: Write the failing plugin composition tests**
+- [x] **Step 1: Write the failing plugin composition tests**
 
 ```ts
 it("composes remark and shortcut plugin contributions", () => {
@@ -313,12 +313,12 @@ it("composes remark and shortcut plugin contributions", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm exec vitest run packages/core/test/editor.test.ts -t "composes remark and shortcut plugin contributions"`
 Expected: FAIL because plugin registration and shortcut execution do not exist
 
-- [ ] **Step 3: Write minimal plugin registration support**
+- [x] **Step 3: Write minimal plugin registration support**
 
 ```ts
 export interface NexusPlugin {
@@ -336,12 +336,12 @@ runShortcut(key) {
 },
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm exec vitest run packages/core/test/editor.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/types.ts packages/core/src/editor.ts packages/core/src/index.ts packages/core/test/editor.test.ts
