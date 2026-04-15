@@ -10,6 +10,7 @@ export interface EditorConfig {
   container: HTMLElement;
   initialValue?: string;
   parser?: ParserLike;
+  parseDelayMs?: number;
   plugins?: NexusPlugin[];
   onChange?: (doc: string, ast: Root) => void;
   onFocus?: () => void;

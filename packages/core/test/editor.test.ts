@@ -1,7 +1,11 @@
 import type { Root } from "mdast";
 import type { Plugin } from "unified";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEditor } from "../src/index";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("createEditor", () => {
   it("creates an editor with the initial document", () => {
@@ -123,6 +127,121 @@ describe("createEditor", () => {
     expect(editor.runShortcut("Mod-k")).toBe(true);
     expect(shortcutResult).toBe(true);
     expect(editor.getDocument()).toBe("shortcut-ran");
+    editor.destroy();
+  });
+
+  it("debounces parsing and emits only the latest document version", () => {
+    vi.useFakeTimers();
+
+    const container = document.createElement("div");
+    const docs: string[] = [];
+    const parser = {
+      parse(markdown: string): Root {
+        return {
+          type: "root",
+          children: [{ type: "paragraph", children: [{ type: "text", value: markdown }] }]
+        };
+      }
+    };
+    const editor = createEditor({
+      container,
+      parser,
+      parseDelayMs: 20,
+      onChange(doc) {
+        docs.push(doc);
+      }
+    });
+
+    editor.setDocument("first");
+    editor.setDocument("second");
+
+    expect(docs).toEqual([]);
+
+    vi.advanceTimersByTime(20);
+
+    expect(docs).toEqual(["second"]);
+    editor.destroy();
+  });
+
+  it("cancels pending parse work when the editor is destroyed", () => {
+    vi.useFakeTimers();
+
+    const container = document.createElement("div");
+    const docs: string[] = [];
+    const editor = createEditor({
+      container,
+      parseDelayMs: 20,
+      onChange(doc) {
+        docs.push(doc);
+      }
+    });
+
+    editor.setDocument("queued");
+    editor.destroy();
+
+    vi.runAllTimers();
+
+    expect(docs).toEqual([]);
+  });
+
+  it("emits focus lifecycle hooks from editor dom events", () => {
+    const container = document.createElement("div");
+    const events: string[] = [];
+    const editor = createEditor({
+      container,
+      onFocus() {
+        events.push("focus");
+      },
+      onBlur() {
+        events.push("blur");
+      }
+    });
+
+    const content = container.querySelector("[contenteditable='true']");
+
+    expect(content).not.toBeNull();
+
+    content?.dispatchEvent(new FocusEvent("focus"));
+    content?.dispatchEvent(new FocusEvent("blur"));
+
+    expect(events).toEqual(["focus", "blur"]);
+    editor.destroy();
+  });
+
+  it("runs plugin shortcuts from codemirror key handling", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({
+      container,
+      plugins: [
+        {
+          name: "keyboard-shortcut",
+          shortcuts: [
+            {
+              key: "Ctrl-k",
+              run(api) {
+                api.setDocument("shortcut-keyboard");
+                return true;
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    const content = container.querySelector("[contenteditable='true']");
+
+    expect(content).not.toBeNull();
+
+    content?.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "k",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+    );
+
+    expect(editor.getDocument()).toBe("shortcut-keyboard");
     editor.destroy();
   });
 });

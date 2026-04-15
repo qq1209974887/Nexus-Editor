@@ -1,5 +1,5 @@
 import { EditorState } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { EditorView, keymap } from "@codemirror/view";
 import type { Root } from "mdast";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
@@ -43,15 +43,91 @@ export function createEditor(config: EditorConfig): EditorAPI {
   const parser = config.parser ?? createParser(plugins);
   const shortcuts = plugins.flatMap((plugin) => plugin.shortcuts ?? []);
   const cmExtensions = plugins.flatMap((plugin) => plugin.cmExtensions ?? []);
+  const parseDelayMs = config.parseDelayMs ?? 0;
+  let destroyed = false;
+  let focused = false;
+  let parseTimer: ReturnType<typeof setTimeout> | undefined;
+  let api!: EditorAPI;
+
+  function setFocused(next: boolean) {
+    if (destroyed || focused === next) {
+      return;
+    }
+
+    focused = next;
+
+    if (next) {
+      config.onFocus?.();
+      return;
+    }
+
+    config.onBlur?.();
+  }
+
+  function emitChange(markdown: string) {
+    if (destroyed) {
+      return;
+    }
+
+    config.onChange?.(markdown, parseDocument(parser, markdown));
+  }
+
+  function scheduleChange(markdown: string) {
+    if (parseTimer) {
+      clearTimeout(parseTimer);
+      parseTimer = undefined;
+    }
+
+    if (parseDelayMs <= 0) {
+      emitChange(markdown);
+      return;
+    }
+
+    parseTimer = setTimeout(() => {
+      parseTimer = undefined;
+      emitChange(markdown);
+    }, parseDelayMs);
+  }
+
+  const shortcutExtensions =
+    shortcuts.length > 0
+      ? [
+          keymap.of(
+            shortcuts.map((shortcut) => ({
+              key: shortcut.key,
+              run: () => shortcut.run(api)
+            }))
+          )
+        ]
+      : [];
+
   const view = new EditorView({
     parent: config.container,
     state: EditorState.create({
       doc: config.initialValue ?? "",
-      extensions: cmExtensions
+      extensions: [
+        EditorView.domEventHandlers({
+          focus() {
+            setFocused(true);
+            return false;
+          },
+          blur() {
+            setFocused(false);
+            return false;
+          }
+        }),
+        EditorView.updateListener.of((update) => {
+          if (update.docChanged) {
+            scheduleChange(update.state.doc.toString());
+          }
+        }),
+        ...shortcutExtensions,
+        ...cmExtensions
+      ]
     })
   });
 
-  const api: EditorAPI = {
+  api = {
     getDocument() {
       return view.state.doc.toString();
     },
@@ -63,24 +139,26 @@ export function createEditor(config: EditorConfig): EditorAPI {
           insert: next
         }
       });
-      config.onChange?.(
-        view.state.doc.toString(),
-        parseDocument(parser, view.state.doc.toString())
-      );
     },
     focus() {
       view.focus();
-      config.onFocus?.();
+      setFocused(true);
     },
     blur() {
       view.contentDOM.blur();
-      config.onBlur?.();
+      setFocused(false);
     },
     runShortcut(key) {
       const shortcut = shortcuts.find((entry) => entry.key === key);
       return shortcut ? shortcut.run(api) : false;
     },
     destroy() {
+      destroyed = true;
+      focused = false;
+      if (parseTimer) {
+        clearTimeout(parseTimer);
+        parseTimer = undefined;
+      }
       view.destroy();
     }
   };
