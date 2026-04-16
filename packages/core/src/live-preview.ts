@@ -1,6 +1,6 @@
 import { StateField, type Extension, type Range, type SelectionRange, type Transaction } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
-import type { Heading, Root } from "mdast";
+import type { Heading, Root, Table } from "mdast";
 
 import { collectLivePreviewRanges, selectionIntersects } from "./live-preview-ranges";
 import { renderLivePreviewNode } from "./live-preview-renderers";
@@ -110,6 +110,69 @@ function buildHeadingDecorations(
   }
 }
 
+function extractCellText(cell: any): string {
+  if (!cell || !("children" in cell) || !Array.isArray(cell.children)) return "";
+  return cell.children
+    .map((c: any) => {
+      if ("value" in c && typeof c.value === "string") return c.value;
+      if ("children" in c && Array.isArray(c.children)) {
+        return c.children.map((n: any) => ("value" in n ? n.value : "")).join("");
+      }
+      return "";
+    })
+    .join("");
+}
+
+function renderTableWidget(node: Table): HTMLElement {
+  const table = document.createElement("table");
+  table.style.borderCollapse = "collapse";
+  table.style.width = "100%";
+  table.style.display = "table";
+
+  const rows = node.children ?? [];
+  if (rows.length === 0) return table;
+
+  // Header
+  const thead = document.createElement("thead");
+  const headerRow = rows[0];
+  const headerTr = document.createElement("tr");
+  const cells = "children" in headerRow && Array.isArray(headerRow.children) ? headerRow.children : [];
+  for (const cell of cells) {
+    const th = document.createElement("th");
+    th.textContent = extractCellText(cell);
+    th.style.border = "1px solid #ddd";
+    th.style.padding = "8px 12px";
+    th.style.textAlign = "left";
+    th.style.fontWeight = "bold";
+    th.style.background = "#f6f8fa";
+    headerTr.appendChild(th);
+  }
+  thead.appendChild(headerTr);
+  table.appendChild(thead);
+
+  // Body
+  if (rows.length > 1) {
+    const tbody = document.createElement("tbody");
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      const tr = document.createElement("tr");
+      const dataCells = "children" in row && Array.isArray(row.children) ? row.children : [];
+      for (const cell of dataCells) {
+        const td = document.createElement("td");
+        td.textContent = extractCellText(cell);
+        td.style.border = "1px solid #ddd";
+        td.style.padding = "8px 12px";
+        td.style.textAlign = "left";
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+  }
+
+  return table;
+}
+
 const SEPARATOR_RE = /^\|?\s*[-:]+\s*(\|\s*[-:]+\s*)*\|?\s*$/;
 
 function buildTableDecorations(
@@ -203,18 +266,18 @@ function buildDecorations(
         selection,
         decos
       );
-    } else if (range.node.type === "table" && !config.renderers.table) {
-      const cursorOnTable = selectionIntersects(range.from, range.to, selection);
-      if (cursorOnTable) {
-        buildTableDecorations(range, doc, decos);
-      } else {
-        decos.push(
-          Decoration.replace({
-            widget: createWidget(renderLivePreviewNode(range.node, range.source, config.renderers)),
-            block: true
-          }).range(range.from, range.to)
-        );
-      }
+    } else if (range.node.type === "table") {
+      // Tables always render as widget — no cursor-based switching
+      decos.push(
+        Decoration.replace({
+          widget: createWidget(
+            config.renderers.table
+              ? renderLivePreviewNode(range.node, range.source, config.renderers)
+              : renderTableWidget(range.node)
+          ),
+          block: true
+        }).range(range.from, range.to)
+      );
     } else if (range.node.type === "image") {
       const cursorOnImage = selectionIntersects(range.from, range.to, selection);
 

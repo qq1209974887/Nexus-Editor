@@ -93,7 +93,7 @@ describe("live preview", () => {
     editor.destroy();
   });
 
-  it("renders tables with mark decorations: bold header, hidden separator, dimmed pipes", () => {
+  it("renders tables as widget with proper thead and tbody", () => {
     const container = document.createElement("div");
     const editor = createEditor({
       container,
@@ -102,14 +102,10 @@ describe("live preview", () => {
       plugins: [createGfmPreset()]
     });
 
-    const text = container.textContent ?? "";
-    // Header and data content should be visible
-    expect(text).toContain("A");
-    expect(text).toContain("B");
-    expect(text).toContain("1");
-    expect(text).toContain("2");
-    // Separator line should be hidden
-    expect(text).not.toContain("---");
+    const table = container.querySelector("table");
+    expect(table).not.toBeNull();
+    expect(table?.querySelector("thead th")?.textContent).toBe("A");
+    expect(table?.querySelector("tbody td")?.textContent).toBe("1");
     editor.destroy();
   });
 
