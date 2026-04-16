@@ -54,10 +54,6 @@ function collectImageRanges(
     const source = match[0];
     const to = from + source.length;
 
-    if (selectionIntersects(from, to, selection)) {
-      continue;
-    }
-
     ranges.push({
       from,
       to,
@@ -85,13 +81,11 @@ function visit(
     const to = child.position?.end.offset;
 
     if (typeof from === "number" && typeof to === "number" && isLivePreviewNode(child)) {
-      if (child.type === "heading") {
-        // Headings are always emitted regardless of cursor position.
-        // buildDecorations decides prefix treatment (hide vs dim) based on cursor.
+      if (child.type === "heading" || child.type === "table") {
+        // Headings and tables are always emitted regardless of cursor position.
+        // buildDecorations decides decoration treatment based on cursor.
         ranges.push({ from, to, node: child, source: doc.slice(from, to) });
 
-        // Always recurse into heading children so inline elements
-        // (bold, italic, etc.) get their own decorations.
         if ("children" in child && Array.isArray(child.children)) {
           visit(child, doc, selection, ranges);
         }

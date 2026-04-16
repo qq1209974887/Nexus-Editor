@@ -147,6 +147,7 @@ export function createDefaultRenderer(context: LivePreviewRenderContext): HTMLEl
       wrapper.setAttribute("data-live-preview-image", context.node.url);
       element.src = context.node.url;
       element.alt = context.node.alt ?? "";
+      element.referrerPolicy = "no-referrer";
       label.textContent = context.node.alt ?? context.node.url;
       wrapper.appendChild(label);
       wrapper.appendChild(element);
