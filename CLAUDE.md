@@ -3,3 +3,23 @@
 - Superpowers is installed for Codex on this machine via `~/.agents/skills/superpowers`.
 - If the current runtime can access those skills, prefer the relevant Superpowers workflow for planning, debugging, code review, and execution.
 - Keep OpenSpec instructions as the source of truth for spec-driven changes in this project.
+
+## Table Widget Development Rules
+
+When modifying `packages/core/src/live-preview-table.ts`:
+
+1. **Never clear state that was just set in the same flow.** If a function sets `rangeStart`, don't call another function that nullifies it before the value is used. Trace the full lifecycle (mousedown → mousemove → mouseup) before changing cleanup logic.
+
+2. **rAF polling must respect all active interaction states.** Before clearing state in a rAF loop, check ALL flags: `isRangeSelecting`, `cellMouseDown`, `self.editing`. Missing any one causes the "works then immediately breaks" pattern.
+
+3. **Never use inline border styles for drag indicators.** Use `box-shadow` or absolute-positioned overlay divs. Setting `border*` on table cells destroys structural borders on cleanup.
+
+4. **`contentEditable` must be off by default on table cells.** Only activate on mousedown→focus, deactivate on blur. Otherwise browser text selection enters cells from outside.
+
+5. **HTML5 Drag API is forbidden for table grips.** Use mousedown/mousemove/mouseup custom drag. HTML5 drag creates uncontrollable ghost images and can't be constrained to the table.
+
+6. **Column grip pills must be positioned relative to header cells** (via absolute overlay or inline in header), NOT in a separate `<tr>` row — separate rows don't align with content column widths.
+
+7. **Test every change with ALL interaction paths:** click-to-edit, drag-to-select-range, grip-click-to-select-column, grip-drag-to-reorder, click-outside-to-deselect, delete-key-on-selection.
+
+8. **Any mouse interaction that spans multiple frames MUST set `self.editing = true` and increment `tableEditingCount`.** This prevents CM6 from recreating the widget DOM mid-interaction (via `eq()` returning true). Release in the mouseup handler. Without this, CM6 may destroy the DOM between mousedown and mousemove, leaving event listeners pointing at detached nodes.

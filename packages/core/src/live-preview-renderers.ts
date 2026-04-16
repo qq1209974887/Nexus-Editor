@@ -112,13 +112,40 @@ export function createDefaultRenderer(context: LivePreviewRenderContext): HTMLEl
         code.className = "hljs";
       }
 
+      // Inject minimal hljs theme as inline styles (no external CSS needed)
+      const style = document.createElement("style");
+      style.textContent = [
+        ".hljs-keyword,.hljs-selector-tag,.hljs-built_in,.hljs-name{color:#d73a49}",
+        ".hljs-string,.hljs-attr,.hljs-symbol,.hljs-bullet,.hljs-addition{color:#032f62}",
+        ".hljs-title,.hljs-section,.hljs-title.function_{color:#6f42c1}",
+        ".hljs-comment,.hljs-quote,.hljs-meta{color:#6a737d}",
+        ".hljs-number,.hljs-literal{color:#005cc5}",
+        ".hljs-type,.hljs-params{color:#e36209}",
+        ".hljs-variable,.hljs-template-variable{color:#24292e}",
+        ".hljs-deletion{color:#b31d28;background:#ffeef0}",
+        ".hljs-regexp,.hljs-link{color:#032f62}",
+        ".hljs-doctag{color:#d73a49}",
+      ].join("");
+      pre.appendChild(style);
+
       pre.style.display = "block";
+      pre.style.position = "relative";
       pre.style.padding = "8px 12px";
       pre.style.background = "#f6f8fa";
       pre.style.borderRadius = "4px";
       pre.style.overflow = "auto";
       pre.style.fontSize = "0.9em";
       pre.style.fontFamily = "monospace";
+      pre.style.color = "#24292e";
+      if (lang) {
+        pre.style.paddingTop = "28px";
+        const langLabel = document.createElement("span");
+        langLabel.textContent = lang;
+        langLabel.style.cssText =
+          "position:absolute;top:4px;right:8px;font-size:11px;color:#888;" +
+          "font-family:sans-serif;user-select:none;";
+        pre.appendChild(langLabel);
+      }
       pre.appendChild(code);
       return pre;
     }

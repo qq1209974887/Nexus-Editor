@@ -123,6 +123,12 @@ export class EditableTableWidget extends WidgetType {
     let selectedCol = -1;
     let selectedRow = -1;
 
+    // Cell range selection (Excel-style)
+    let rangeStart: { row: number; col: number } | null = null;
+    let rangeEnd: { row: number; col: number } | null = null;
+    let isRangeSelecting = false;
+    let cellMouseDown = false; // true between mousedown and mouseup on a cell
+
     // Custom drag state (no HTML5 drag API)
     let draggingCol = -1;   // which column is being dragged
     let draggingRow = -1;   // which row is being dragged
@@ -146,15 +152,19 @@ export class EditableTableWidget extends WidgetType {
       "display:none;z-index:1;border-radius:2px;";
     wrapper.appendChild(selectionOverlay);
 
-    // Poll CM6 selection to show/hide overlay (self-cleaning when disconnected)
+    // Poll CM6 selection to show/hide overlay and clear range when focus leaves table
     const checkSelection = (): void => {
-      if (!wrapper.isConnected) return; // stop when widget removed
+      if (!wrapper.isConnected) return;
       const v = self.viewRef.current;
       if (v && !self.editing) {
         const sel = v.state.selection.main;
         const tableEnd = self.tableFrom + self.source.length;
         const isSelected = sel.from !== sel.to && sel.from <= self.tableFrom && sel.to >= tableEnd;
         selectionOverlay.style.display = isSelected ? "block" : "none";
+        // If cursor moved outside table, no active mouse interaction, and not mid-select, clear range
+        if (rangeStart && !isRangeSelecting && !cellMouseDown && (sel.head < self.tableFrom || sel.head > tableEnd)) {
+          clearRangeSelection();
+        }
       } else {
         selectionOverlay.style.display = "none";
       }
@@ -265,6 +275,90 @@ export class EditableTableWidget extends WidgetType {
       });
     }
 
+    // ── Range selection border overlay ──
+    const rangeBorder = document.createElement("div");
+    rangeBorder.style.cssText =
+      "position:absolute;border:2px solid " + SELECT_BORDER + ";pointer-events:none;" +
+      "display:none;z-index:1;border-radius:2px;";
+    wrapper.appendChild(rangeBorder);
+
+    function getNormalizedRange(): { r1: number; c1: number; r2: number; c2: number } | null {
+      if (!rangeStart || !rangeEnd) return null;
+      return {
+        r1: Math.min(rangeStart.row, rangeEnd.row),
+        c1: Math.min(rangeStart.col, rangeEnd.col),
+        r2: Math.max(rangeStart.row, rangeEnd.row),
+        c2: Math.max(rangeStart.col, rangeEnd.col),
+      };
+    }
+
+    function getCellElement(row: number, col: number): HTMLElement | null {
+      const dataRows = Array.from(table.querySelectorAll("tr")).filter((_, i) => i > 0);
+      const tr = dataRows[row];
+      if (!tr) return null;
+      const cells = tr.querySelectorAll(".nexus-cell");
+      return (cells[col] as HTMLElement) ?? null;
+    }
+
+    function renderRangeSelection(): void {
+      const range = getNormalizedRange();
+      if (!range) { rangeBorder.style.display = "none"; return; }
+
+      // Highlight cells in range
+      const dataRows = Array.from(table.querySelectorAll("tr")).filter((_, i) => i > 0);
+      dataRows.forEach((tr, rowIdx) => {
+        tr.querySelectorAll(".nexus-cell").forEach((cell, colIdx) => {
+          const h = cell as HTMLElement;
+          if (rowIdx >= range.r1 && rowIdx <= range.r2 && colIdx >= range.c1 && colIdx <= range.c2) {
+            h.style.background = SELECT_BG;
+          } else {
+            h.style.background = h.tagName === "TH" ? "#fafafa" : "";
+          }
+        });
+      });
+
+      // Position the border overlay around the selected range
+      const topLeft = getCellElement(range.r1, range.c1);
+      const bottomRight = getCellElement(range.r2, range.c2);
+      if (!topLeft || !bottomRight) { rangeBorder.style.display = "none"; return; }
+
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const tlRect = topLeft.getBoundingClientRect();
+      const brRect = bottomRight.getBoundingClientRect();
+
+      rangeBorder.style.left = (tlRect.left - wrapperRect.left - 1) + "px";
+      rangeBorder.style.top = (tlRect.top - wrapperRect.top - 1) + "px";
+      rangeBorder.style.width = (brRect.right - tlRect.left) + "px";
+      rangeBorder.style.height = (brRect.bottom - tlRect.top) + "px";
+      rangeBorder.style.display = "block";
+    }
+
+    function clearRangeSelection(): void {
+      rangeStart = null;
+      rangeEnd = null;
+      isRangeSelecting = false;
+      rangeBorder.style.display = "none";
+      // Reset cell backgrounds
+      table.querySelectorAll(".nexus-cell").forEach((el) => {
+        const h = el as HTMLElement;
+        h.style.background = h.tagName === "TH" ? "#fafafa" : "";
+      });
+    }
+
+    function cellAtPoint(clientX: number, clientY: number): { row: number; col: number } | null {
+      const dataRows = Array.from(table.querySelectorAll("tr")).filter((_, i) => i > 0);
+      for (let r = 0; r < dataRows.length; r++) {
+        const cells = dataRows[r].querySelectorAll(".nexus-cell");
+        for (let c = 0; c < cells.length; c++) {
+          const rect = cells[c].getBoundingClientRect();
+          if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+            return { row: r, col: c };
+          }
+        }
+      }
+      return null;
+    }
+
     function clearSelection(): void {
       selectedCol = -1;
       selectedRow = -1;
@@ -373,6 +467,9 @@ export class EditableTableWidget extends WidgetType {
       gripRow.style.opacity = "0";
       draggingCol = -1;
       draggingRow = -1;
+      // Release editing lock — allow CM6 to rebuild widget
+      self.editing = false;
+      tableEditingCount--;
       document.removeEventListener("mousemove", onDragMove);
       document.removeEventListener("mouseup", onDragEnd);
       document.body.style.cursor = "";
@@ -382,6 +479,9 @@ export class EditableTableWidget extends WidgetType {
     function startColDrag(colIdx: number, startX: number): void {
       draggingCol = colIdx;
       draggingRow = -1;
+      // Lock editing to prevent CM6 from recreating widget DOM mid-drag
+      self.editing = true;
+      tableEditingCount++;
       // Highlight source column
       getColumnCells(colIdx).forEach((el) => { el.style.background = DRAG_HIGHLIGHT_BG; });
       // Hide grip row, show floating pill instead
@@ -398,6 +498,9 @@ export class EditableTableWidget extends WidgetType {
     function startRowDrag(rowIdx: number, startY: number): void {
       draggingRow = rowIdx;
       draggingCol = -1;
+      // Lock editing to prevent CM6 from recreating widget DOM mid-drag
+      self.editing = true;
+      tableEditingCount++;
       // Highlight source row
       const trs = Array.from(table.querySelectorAll("tr")).filter((_, i) => i > 0);
       if (trs[rowIdx]) {
@@ -448,7 +551,7 @@ export class EditableTableWidget extends WidgetType {
       gripCell.addEventListener("click", (e) => {
         e.stopPropagation();
         highlightColumn(colIdx);
-        wrapper.focus();
+        wrapper.focus({ preventScroll: true });
       });
 
       gripRow.appendChild(gripCell);
@@ -492,7 +595,7 @@ export class EditableTableWidget extends WidgetType {
         rowGrip.addEventListener("click", (e) => {
           e.stopPropagation();
           highlightRow(curRowIdx);
-          wrapper.focus();
+          wrapper.focus({ preventScroll: true });
         });
       }
 
@@ -508,14 +611,54 @@ export class EditableTableWidget extends WidgetType {
           "text-align:left;outline:none;min-width:60px;vertical-align:top;cursor:text;";
         if (isHeader) { td.style.fontWeight = "bold"; td.style.background = "#fafafa"; td.style.borderTop = "1px solid #eee"; }
 
-        // Only activate contentEditable on click, deactivate on blur
+        // Cell interaction: single click = edit, drag = range select
+        const cellRow = curRowIdx;
+        const cellCol = colIdx;
+        let cellMouseMoved = false;
+
         td.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return; // only left button
           e.stopPropagation();
-          td.contentEditable = "true";
-          // Defer focus to next tick so contentEditable is active
-          requestAnimationFrame(() => td.focus());
+          cellMouseMoved = false;
+          clearSelection();
+
+          // Prepare range selection but don't render until mouse moves to a different cell
+          clearRangeSelection();
+          cellMouseDown = true;
+          rangeStart = { row: cellRow, col: cellCol };
+          rangeEnd = { row: cellRow, col: cellCol };
+
+          const onCellMouseMove = (me: MouseEvent): void => {
+            const target = cellAtPoint(me.clientX, me.clientY);
+            if (target && (target.row !== rangeStart!.row || target.col !== rangeStart!.col)) {
+              cellMouseMoved = true;
+              isRangeSelecting = true;
+              rangeEnd = target;
+              renderRangeSelection();
+            }
+          };
+          const onCellMouseUp = (): void => {
+            document.removeEventListener("mousemove", onCellMouseMove);
+            document.removeEventListener("mouseup", onCellMouseUp);
+            cellMouseDown = false;
+            isRangeSelecting = false;
+
+            const range = getNormalizedRange();
+            if (!cellMouseMoved || (range && range.r1 === range.r2 && range.c1 === range.c2)) {
+              // Single cell click — activate editing
+              clearRangeSelection();
+              td.contentEditable = "true";
+              requestAnimationFrame(() => td.focus({ preventScroll: true }));
+            } else {
+              // Multi-cell range selected — keep range visible, focus wrapper for key events
+              wrapper.focus({ preventScroll: true });
+            }
+          };
+          document.addEventListener("mousemove", onCellMouseMove);
+          document.addEventListener("mouseup", onCellMouseUp);
         });
-        td.addEventListener("focus", () => { self.editing = true; tableEditingCount++; clearSelection(); });
+
+        td.addEventListener("focus", () => { self.editing = true; tableEditingCount++; clearRangeSelection(); });
         td.addEventListener("blur", () => {
           self.editing = false;
           tableEditingCount--;
@@ -541,7 +684,7 @@ export class EditableTableWidget extends WidgetType {
             const all = table.querySelectorAll(".nexus-cell");
             const idx = Array.from(all).indexOf(td);
             const next = e.shiftKey ? idx - 1 : idx + 1;
-            if (next >= 0 && next < all.length) (all[next] as HTMLElement).focus();
+            if (next >= 0 && next < all.length) (all[next] as HTMLElement).focus({ preventScroll: true });
           }
         });
 
@@ -636,6 +779,27 @@ export class EditableTableWidget extends WidgetType {
 
     wrapper.addEventListener("keydown", (e) => {
       if (e.key === "Delete" || e.key === "Backspace") {
+        // Range selection: clear cell contents in selected range
+        const range = getNormalizedRange();
+        if (range) {
+          e.preventDefault();
+          const lines = self.source.split("\n");
+          const dl: number[] = [];
+          for (let i = 0; i < lines.length; i++) if (!SEPARATOR_RE.test(lines[i])) dl.push(i);
+          for (let r = range.r1; r <= range.r2; r++) {
+            const lineIdx = dl[r];
+            if (lineIdx === undefined) continue;
+            const cells = lines[lineIdx].split("|").filter((_, i, a) => i > 0 && i < a.length - 1);
+            for (let c = range.c1; c <= range.c2; c++) {
+              if (c < cells.length) cells[c] = "  ";
+            }
+            lines[lineIdx] = "|" + cells.join("|") + "|";
+          }
+          self.dispatch(lines.join("\n"));
+          clearRangeSelection();
+          return;
+        }
+        // Column/row grip selection: delete column/row
         if (selectedCol >= 0) {
           e.preventDefault();
           self.deleteColumn(selectedCol);

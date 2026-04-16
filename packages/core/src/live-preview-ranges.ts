@@ -82,8 +82,8 @@ function visit(
     const to = child.position?.end.offset;
 
     if (typeof from === "number" && typeof to === "number" && isLivePreviewNode(child)) {
-      if (child.type === "heading" || child.type === "table" || child.type === "list") {
-        // Headings and tables are always emitted regardless of cursor position.
+      if (child.type === "heading" || child.type === "table" || child.type === "list" || child.type === "code") {
+        // Always emitted regardless of cursor position.
         // buildDecorations decides decoration treatment based on cursor.
         ranges.push({ from, to, node: child, source: doc.slice(from, to) });
 

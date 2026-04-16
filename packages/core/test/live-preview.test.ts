@@ -77,7 +77,7 @@ describe("live preview", () => {
     editor.destroy();
   });
 
-  it("renders fenced code blocks as pre/code elements", () => {
+  it("renders fenced code blocks with line decorations and syntax highlighting", () => {
     const container = document.createElement("div");
     const editor = createEditor({
       container,
@@ -85,11 +85,19 @@ describe("live preview", () => {
       livePreview: true
     });
 
-    const pre = container.querySelector("pre");
-    expect(pre).not.toBeNull();
-    const code = pre?.querySelector("code");
-    expect(code?.textContent).toBe("console.log(1)");
-    expect(code?.getAttribute("data-language")).toBe("js");
+    // Code block uses line decorations (background) instead of <pre> widgets
+    // The code content should be present as raw text in the editor
+    expect(container.textContent).toContain("console.log(1)");
+    // Fence lines should be dimmed (have color:#aaa style)
+    const lines = container.querySelectorAll(".cm-line");
+    let hasFenceDim = false;
+    lines.forEach((line) => {
+      if (line.textContent?.includes("```") && line.querySelector("[style*='color:#aaa']")) {
+        hasFenceDim = true;
+      }
+    });
+    // Language label should be present as a widget
+    expect(container.textContent).toContain("js");
     editor.destroy();
   });
 

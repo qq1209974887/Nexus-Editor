@@ -1,6 +1,7 @@
 import { StateField, type Extension, type Range, type SelectionRange, type Transaction } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
-import type { Heading, List, Root, Table } from "mdast";
+import hljs from "highlight.js";
+import type { Code, Heading, List, Root, Table } from "mdast";
 
 import { collectLivePreviewRanges, selectionIntersects } from "./live-preview-ranges";
 import { renderLivePreviewNode } from "./live-preview-renderers";
@@ -59,7 +60,7 @@ function createWidget(element: HTMLElement, swallowEvents = false): WidgetType {
   })();
 }
 
-const BLOCK_NODE_TYPES = new Set(["blockquote", "code", "thematicBreak"]);
+const BLOCK_NODE_TYPES = new Set(["blockquote", "thematicBreak"]);
 
 const HEADING_FONT_SIZE: Record<number, string> = {
   1: "1.6em", 2: "1.4em", 3: "1.2em", 4: "1.1em", 5: "1.05em", 6: "1em"
@@ -177,6 +178,140 @@ function buildListDecorations(
   }
 }
 
+// Token-to-color map (GitHub-light theme)
+const HLJS_COLORS: Record<string, string> = {
+  keyword: "#d73a49", "selector-tag": "#d73a49", "built_in": "#d73a49", name: "#d73a49", doctag: "#d73a49",
+  string: "#032f62", attr: "#032f62", symbol: "#032f62", bullet: "#032f62", addition: "#032f62", regexp: "#032f62", link: "#032f62",
+  title: "#6f42c1", section: "#6f42c1", "title.function_": "#6f42c1",
+  comment: "#6a737d", quote: "#6a737d", meta: "#6a737d",
+  number: "#005cc5", literal: "#005cc5",
+  type: "#e36209", params: "#e36209",
+  deletion: "#b31d28",
+  variable: "#24292e", "template-variable": "#24292e",
+};
+
+function getTokenColor(scope: string): string | null {
+  if (HLJS_COLORS[scope]) return HLJS_COLORS[scope];
+  // Try prefix match (e.g., "title.function_" → "title")
+  const dot = scope.indexOf(".");
+  if (dot > 0) return HLJS_COLORS[scope.slice(0, dot)] ?? null;
+  return null;
+}
+
+function buildCodeBlockDecorations(
+  range: { from: number; to: number; node: Code; source: string },
+  selection: readonly SelectionRange[],
+  decos: Range<Decoration>[]
+): void {
+  const source = range.source;
+  const lines = source.split("\n");
+  const cursorOnCode = selectionIntersects(range.from, range.to, selection);
+  let lineOffset = range.from;
+
+  for (let li = 0; li < lines.length; li++) {
+    const lineStart = lineOffset;
+    const lineEnd = lineOffset + lines[li].length;
+    const isFirstLine = li === 0;
+    const isLastLine = li === lines.length - 1;
+
+    // Line decoration: background on every line
+    decos.push(Decoration.line({
+      attributes: {
+        style: "background:#f6f8fa;font-family:monospace;font-size:0.9em;"
+          + (isFirstLine ? "border-radius:4px 4px 0 0;padding-top:4px;" : "")
+          + (isLastLine ? "border-radius:0 0 4px 4px;padding-bottom:4px;" : "")
+      }
+    }).range(lineStart));
+
+    // Dim fences (first and last line)
+    if (isFirstLine || isLastLine) {
+      if (lineEnd > lineStart) {
+        decos.push(Decoration.mark({ attributes: { style: "color:#aaa" } }).range(lineStart, lineEnd));
+      }
+    }
+
+    lineOffset = lineEnd + 1;
+  }
+
+  // Syntax highlighting via hljs tokens (only when cursor is outside)
+  if (!cursorOnCode && range.node.value) {
+    const lang = range.node.lang;
+    let result: hljs.HighlightResult | null = null;
+    try {
+      if (lang && hljs.getLanguage(lang)) {
+        result = hljs.highlight(range.node.value, { language: lang });
+      } else if (lang) {
+        result = hljs.highlightAuto(range.node.value);
+      }
+    } catch { /* ignore hljs errors */ }
+
+    if (result) {
+      // Content starts after the first line (fence) + newline
+      const firstNewline = source.indexOf("\n");
+      if (firstNewline >= 0) {
+        const contentStart = range.from + firstNewline + 1;
+        // Walk the hljs emitter tree to extract token positions
+        applyHljsTokens(result._emitter as any, contentStart, decos);
+      }
+    }
+  }
+
+  // Language label when cursor is outside (as widget after opening fence)
+  if (!cursorOnCode && range.node.lang) {
+    const firstNewline = source.indexOf("\n");
+    if (firstNewline > 0) {
+      const labelEl = document.createElement("span");
+      labelEl.textContent = range.node.lang;
+      labelEl.style.cssText = "float:right;font-size:11px;color:#888;font-family:sans-serif;user-select:none;";
+      decos.push(Decoration.widget({
+        widget: new (class extends WidgetType {
+          toDOM() { return labelEl; }
+          ignoreEvent() { return true; }
+        })(),
+        side: 1
+      }).range(range.from + firstNewline));
+    }
+
+    // Hide fence text when cursor is outside
+    const firstNl = source.indexOf("\n");
+    const lastNl = source.lastIndexOf("\n");
+    if (firstNl > 0) {
+      decos.push(Decoration.mark({ attributes: { style: "font-size:0;color:transparent;overflow:hidden;max-height:0;display:inline-block;width:0;" } }).range(range.from, range.from + firstNl));
+    }
+    if (lastNl > firstNl) {
+      decos.push(Decoration.mark({ attributes: { style: "font-size:0;color:transparent;overflow:hidden;max-height:0;display:inline-block;width:0;" } }).range(range.from + lastNl + 1, range.to));
+    }
+  }
+}
+
+function applyHljsTokens(emitter: any, offset: number, decos: Range<Decoration>[]): void {
+  if (!emitter || !emitter.rootNode) return;
+
+  function walk(node: any, pos: number): number {
+    if (typeof node === "string") {
+      return pos + node.length;
+    }
+    if (node.children) {
+      const color = node.scope ? getTokenColor(node.scope) : null;
+      const start = pos;
+      let cur = pos;
+      for (const child of node.children) {
+        cur = walk(child, cur);
+      }
+      if (color && cur > start) {
+        decos.push(Decoration.mark({ attributes: { style: "color:" + color } }).range(offset + start, offset + cur));
+      }
+      return cur;
+    }
+    return pos;
+  }
+
+  let pos = 0;
+  for (const child of emitter.rootNode.children) {
+    pos = walk(child, pos);
+  }
+}
+
 function buildDecorations(
   doc: string,
   selection: readonly SelectionRange[],
@@ -207,6 +342,8 @@ function buildDecorations(
       );
     } else if (range.node.type === "list") {
       buildListDecorations(range as { from: number; to: number; node: List }, doc, decos, viewRef);
+    } else if (range.node.type === "code" && !config.renderers.code) {
+      buildCodeBlockDecorations(range as { from: number; to: number; node: Code; source: string }, selection, decos);
     } else if (range.node.type === "image") {
       const cursorOnImage = selectionIntersects(range.from, range.to, selection);
       if (cursorOnImage) {
