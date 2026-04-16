@@ -123,101 +123,112 @@ function extractCellText(cell: any): string {
     .join("");
 }
 
-function createEditableTable(
-  node: Table,
-  tableFrom: number,
-  source: string,
-  viewRef: { current: EditorView | null }
-): HTMLElement {
-  const table = document.createElement("table");
-  table.style.borderCollapse = "collapse";
-  table.style.width = "100%";
-  table.style.display = "table";
+class EditableTableWidget extends WidgetType {
+  private editing = false;
 
-  const rows = node.children ?? [];
-  if (rows.length === 0) return table;
-
-  // Parse the raw source lines so we can map cells back to document positions
-  const sourceLines = source.split("\n");
-  // Find which source lines are separator lines vs data/header lines
-  const dataLineIndices: number[] = [];
-  for (let i = 0; i < sourceLines.length; i++) {
-    if (!SEPARATOR_RE.test(sourceLines[i])) {
-      dataLineIndices.push(i);
-    }
+  constructor(
+    private node: Table,
+    private tableFrom: number,
+    private source: string,
+    private viewRef: { current: EditorView | null }
+  ) {
+    super();
   }
 
-  let rowIdx = 0;
-  for (const astRow of rows) {
-    const isHeader = rowIdx === 0;
-    const tr = document.createElement("tr");
-    const astCells = "children" in astRow && Array.isArray(astRow.children) ? astRow.children : [];
+  eq(other: EditableTableWidget): boolean {
+    // While a cell is being edited, keep the existing DOM to preserve focus
+    if (this.editing) return true;
+    return this.source === other.source;
+  }
 
-    // Map this AST row to its source line index
-    const sourceLineIdx = dataLineIndices[rowIdx];
+  ignoreEvent(): boolean {
+    return true;
+  }
 
-    for (let colIdx = 0; colIdx < astCells.length; colIdx++) {
-      const td = document.createElement(isHeader ? "th" : "td");
-      td.contentEditable = "true";
-      td.textContent = extractCellText(astCells[colIdx]);
-      td.style.border = "1px solid #ddd";
-      td.style.padding = "6px 10px";
-      td.style.textAlign = "left";
-      td.style.outline = "none";
-      td.style.minWidth = "40px";
-      if (isHeader) {
-        td.style.fontWeight = "bold";
-        td.style.background = "#f6f8fa";
+  toDOM(): HTMLElement {
+    const table = document.createElement("table");
+    table.style.borderCollapse = "collapse";
+    table.style.width = "100%";
+    table.style.display = "table";
+
+    const rows = this.node.children ?? [];
+    if (rows.length === 0) return table;
+
+    const sourceLines = this.source.split("\n");
+    const dataLineIndices: number[] = [];
+    for (let i = 0; i < sourceLines.length; i++) {
+      if (!SEPARATOR_RE.test(sourceLines[i])) {
+        dataLineIndices.push(i);
       }
-
-      // On edit: reconstruct the markdown line and dispatch to CM6
-      td.addEventListener("input", () => {
-        const v = viewRef.current;
-        if (!v || sourceLineIdx === undefined) return;
-
-        // Collect current cell values from the DOM row
-        const cellEls = tr.querySelectorAll("th, td");
-        const cellValues: string[] = [];
-        cellEls.forEach((el) => cellValues.push(el.textContent ?? ""));
-
-        // Reconstruct the markdown line: | val1 | val2 | val3 |
-        const newLine = "| " + cellValues.join(" | ") + " |";
-
-        // Find the document offset for this source line
-        let lineOffset = tableFrom;
-        for (let i = 0; i < sourceLineIdx; i++) {
-          lineOffset += sourceLines[i].length + 1; // +1 for \n
-        }
-        const lineEnd = lineOffset + sourceLines[sourceLineIdx].length;
-
-        // Update the source line cache so subsequent edits use the right offsets
-        sourceLines[sourceLineIdx] = newLine;
-
-        v.dispatch({
-          changes: { from: lineOffset, to: lineEnd, insert: newLine }
-        });
-      });
-
-      // Tab key navigates between cells
-      td.addEventListener("keydown", (e) => {
-        if (e.key === "Tab") {
-          e.preventDefault();
-          const allCells = table.querySelectorAll("th[contenteditable], td[contenteditable]");
-          const idx = Array.from(allCells).indexOf(td);
-          const next = e.shiftKey ? idx - 1 : idx + 1;
-          if (next >= 0 && next < allCells.length) {
-            (allCells[next] as HTMLElement).focus();
-          }
-        }
-      });
-
-      tr.appendChild(td);
     }
-    table.appendChild(tr);
-    rowIdx++;
-  }
 
-  return table;
+    const self = this;
+    let rowIdx = 0;
+    for (const astRow of rows) {
+      const isHeader = rowIdx === 0;
+      const tr = document.createElement("tr");
+      const astCells = "children" in astRow && Array.isArray(astRow.children) ? astRow.children : [];
+      const sourceLineIdx = dataLineIndices[rowIdx];
+
+      for (let colIdx = 0; colIdx < astCells.length; colIdx++) {
+        const td = document.createElement(isHeader ? "th" : "td");
+        td.contentEditable = "true";
+        td.textContent = extractCellText(astCells[colIdx]);
+        td.style.border = "1px solid #ddd";
+        td.style.padding = "6px 10px";
+        td.style.textAlign = "left";
+        td.style.outline = "none";
+        td.style.minWidth = "40px";
+        if (isHeader) {
+          td.style.fontWeight = "bold";
+          td.style.background = "#f6f8fa";
+        }
+
+        td.addEventListener("focus", () => { self.editing = true; });
+        td.addEventListener("blur", () => { self.editing = false; });
+
+        td.addEventListener("input", () => {
+          const v = self.viewRef.current;
+          if (!v || sourceLineIdx === undefined) return;
+
+          const cellEls = tr.querySelectorAll("th, td");
+          const cellValues: string[] = [];
+          cellEls.forEach((el) => cellValues.push(el.textContent ?? ""));
+
+          const newLine = "| " + cellValues.join(" | ") + " |";
+
+          let lineOffset = self.tableFrom;
+          for (let i = 0; i < sourceLineIdx; i++) {
+            lineOffset += sourceLines[i].length + 1;
+          }
+          const lineEnd = lineOffset + sourceLines[sourceLineIdx].length;
+          sourceLines[sourceLineIdx] = newLine;
+
+          v.dispatch({
+            changes: { from: lineOffset, to: lineEnd, insert: newLine }
+          });
+        });
+
+        td.addEventListener("keydown", (e) => {
+          if (e.key === "Tab") {
+            e.preventDefault();
+            const allCells = table.querySelectorAll("th[contenteditable], td[contenteditable]");
+            const idx = Array.from(allCells).indexOf(td);
+            const next = e.shiftKey ? idx - 1 : idx + 1;
+            if (next >= 0 && next < allCells.length) {
+              (allCells[next] as HTMLElement).focus();
+            }
+          }
+        });
+
+        tr.appendChild(td);
+      }
+      table.appendChild(tr);
+      rowIdx++;
+    }
+
+    return table;
+  }
 }
 
 const SEPARATOR_RE = /^\|?\s*[-:]+\s*(\|\s*[-:]+\s*)*\|?\s*$/;
@@ -396,15 +407,14 @@ function buildDecorations(
         decos
       );
     } else if (range.node.type === "table" && !config.renderers.table) {
-      const tableEl = createEditableTable(
-        range.node as Table,
-        range.from,
-        range.source,
-        viewRef
-      );
       decos.push(
         Decoration.replace({
-          widget: createWidget(tableEl, true),
+          widget: new EditableTableWidget(
+            range.node as Table,
+            range.from,
+            range.source,
+            viewRef
+          ),
           block: true
         }).range(range.from, range.to)
       );
