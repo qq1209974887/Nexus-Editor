@@ -508,17 +508,22 @@ function buildDecorations(
         parentSpans.push([range.from, range.to]);
       }
 
-      // Inline formatting: hide markers, apply style as mark (keeps text as real CM6 content)
+      // Inline formatting: hide markers via transparent mark (preserves cursor positions),
+      // apply style to visible text
       const inlineStyle = getInlineMarkerStyle(range.node.type, range.source);
       if (inlineStyle && !config.renderers[range.node.type]) {
         const { openLen, closeLen, style, attrs } = inlineStyle;
-        // Hide opening marker
+        // Hide opening marker — mark as transparent so cursor can step through
         if (openLen > 0) {
-          decos.push(Decoration.replace({}).range(range.from, range.from + openLen));
+          decos.push(Decoration.mark({
+            attributes: { style: "color:transparent;font-size:0;vertical-align:text-top;letter-spacing:-1em;" }
+          }).range(range.from, range.from + openLen));
         }
         // Hide closing marker
         if (closeLen > 0) {
-          decos.push(Decoration.replace({}).range(range.to - closeLen, range.to));
+          decos.push(Decoration.mark({
+            attributes: { style: "color:transparent;font-size:0;vertical-align:text-top;letter-spacing:-1em;" }
+          }).range(range.to - closeLen, range.to));
         }
         // Apply style to visible text
         const textFrom = range.from + openLen;

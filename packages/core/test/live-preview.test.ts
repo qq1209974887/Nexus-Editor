@@ -3,6 +3,15 @@ import { describe, expect, it } from "vitest";
 import { createGfmPreset } from "../../preset-gfm/src/index";
 import { createEditor } from "../src/index";
 
+/** Get text content excluding transparent (hidden marker) spans. */
+function getVisibleText(container: HTMLElement): string {
+  const clone = container.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll("span").forEach((span) => {
+    if (span.style.color === "transparent") span.remove();
+  });
+  return clone.textContent ?? "";
+}
+
 describe("live preview", () => {
   // ── Inline formatting ──
 
@@ -14,14 +23,13 @@ describe("live preview", () => {
       livePreview: true
     });
 
-    const text = container.textContent ?? "";
+    const text = getVisibleText(container);
     expect(text).toContain("bold");
     expect(text).toContain("italic");
     expect(text).toContain("code");
     expect(text).toContain("link");
-    // Markers hidden
+    // Markers hidden (transparent, not in visible text)
     expect(text).not.toContain("**");
-    // Link markers hidden (visually via CSS, may still be in textContent)
     expect(container.querySelector("[data-link-url]")).not.toBeNull();
     editor.destroy();
   });
@@ -34,7 +42,7 @@ describe("live preview", () => {
       livePreview: true
     });
 
-    expect(container.textContent).not.toContain("**");
+    expect(getVisibleText(container)).not.toContain("**");
 
     editor.setSelection(8);
 
@@ -51,7 +59,7 @@ describe("live preview", () => {
       plugins: [createGfmPreset()]
     });
 
-    const text = container.textContent ?? "";
+    const text = getVisibleText(container);
     expect(text).toContain("deleted");
     expect(text).not.toContain("~~");
     editor.destroy();
@@ -67,7 +75,7 @@ describe("live preview", () => {
 
     editor.setDocument("Text **changed**");
 
-    const text = container.textContent ?? "";
+    const text = getVisibleText(container);
     expect(text).toContain("changed");
     expect(text).not.toContain("**");
     editor.destroy();
@@ -83,9 +91,8 @@ describe("live preview", () => {
       livePreview: true
     });
 
-    const text = container.textContent ?? "";
+    const text = getVisibleText(container);
     expect(text).toContain("bold italic");
-    // All marker chars (***) hidden
     expect(text).not.toContain("***");
     expect(text).not.toContain("**");
     editor.destroy();
@@ -99,7 +106,7 @@ describe("live preview", () => {
       livePreview: true
     });
 
-    const text = container.textContent ?? "";
+    const text = getVisibleText(container);
     expect(text).toContain("mixed");
     expect(text).not.toContain("**");
     expect(text).not.toContain("_");
@@ -389,7 +396,7 @@ describe("live preview", () => {
     // Custom renderer for strong
     expect(container.querySelector("span")?.textContent).toBe("BOLD");
     // Default mark decoration for italic
-    const text = container.textContent ?? "";
+    const text = getVisibleText(container);
     expect(text).toContain("italic");
     expect(text).not.toContain("*italic*");
     editor.destroy();

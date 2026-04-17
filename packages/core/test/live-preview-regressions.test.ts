@@ -3,6 +3,14 @@ import { describe, expect, it } from "vitest";
 import { createHistoryPlugin } from "../../plugin-history/src/index";
 import { createEditor } from "../src/index";
 
+function getVisibleText(container: HTMLElement): string {
+  const clone = container.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll("span").forEach((span) => {
+    if (span.style.color === "transparent") span.remove();
+  });
+  return clone.textContent ?? "";
+}
+
 describe("live preview regressions", () => {
   it("keeps live preview working when the history plugin is registered", () => {
     const container = document.createElement("div");
@@ -27,7 +35,7 @@ describe("live preview regressions", () => {
 
     const text = container.textContent ?? "";
     expect(text).toContain("bold");
-    expect(text).not.toContain("**");
+    expect(getVisibleText(container)).not.toContain("**");
     editor.destroy();
   });
 
@@ -48,7 +56,7 @@ describe("live preview regressions", () => {
     // Cursor left: markers hidden, text visible
     const text = container.textContent ?? "";
     expect(text).toContain("bold");
-    expect(text).not.toContain("**");
+    expect(getVisibleText(container)).not.toContain("**");
     editor.destroy();
   });
 });
