@@ -85,16 +85,16 @@ importers:
         specifier: ^6.18.0
         version: 6.20.1
       '@codemirror/commands':
-        specifier: ^6.10.0
+        specifier: ^6.10.3
         version: 6.10.3
       '@codemirror/language':
         specifier: ^6.12.3
         version: 6.12.3
       '@codemirror/state':
-        specifier: ^6.5.2
+        specifier: ^6.6.0
         version: 6.6.0
       '@codemirror/view':
-        specifier: ^6.36.1
+        specifier: ^6.41.0
         version: 6.41.0
       '@replit/codemirror-indentation-markers':
         specifier: ^6.5.3

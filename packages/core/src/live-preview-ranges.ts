@@ -48,7 +48,7 @@ export function selectionIntersects(
 }
 
 /** Check if the cursor is on the same line as the range [from, to]. */
-function selectionOnSameLine(
+export function selectionOnSameLine(
   from: number,
   to: number,
   doc: string,
@@ -115,18 +115,15 @@ function visit(
         continue;
       }
 
-      // Inline formatting: hide markers when cursor is on a DIFFERENT line.
-      // Line-level check prevents scroll/click desync caused by per-character
-      // range intersection with transparent marks or replace decorations.
-      const cursorOnSameLine = selectionOnSameLine(from, to, doc, selection);
-      if (!cursorOnSameLine) {
-        ranges.push({ from, to, node: child, source: doc.slice(from, to) });
-        // Recurse into children for nested inline formatting (e.g. ***bold italic***)
-        if ("children" in child && Array.isArray(child.children)) {
-          visit(child as Parent, doc, selection, ranges);
-        }
-        continue;
+      // Inline formatting: ALWAYS emit ranges (never skip based on cursor).
+      // buildDecorations handles cursor-aware styling (transparent vs visible).
+      // This ensures Decoration.replace is never used — only mark decorations
+      // with color changes — so the heightmap stays perfectly stable.
+      ranges.push({ from, to, node: child, source: doc.slice(from, to) });
+      if ("children" in child && Array.isArray(child.children)) {
+        visit(child as Parent, doc, selection, ranges);
       }
+      continue;
     }
 
     if ("children" in child && Array.isArray(child.children)) {

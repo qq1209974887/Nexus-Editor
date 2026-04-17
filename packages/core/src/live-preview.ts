@@ -3,7 +3,7 @@ import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemir
 import hljs from "highlight.js";
 import type { Code, FootnoteDefinition, FootnoteReference, Heading, List, Root, Table } from "mdast";
 
-import { collectLivePreviewRanges, selectionIntersects } from "./live-preview-ranges";
+import { collectLivePreviewRanges, selectionIntersects, selectionOnSameLine } from "./live-preview-ranges";
 import { renderLivePreviewNode } from "./live-preview-renderers";
 import { EditableTableWidget, isTableEditing } from "./live-preview-table";
 import type {
@@ -224,19 +224,18 @@ function buildCodeBlockDecorations(
     const isFirstLine = li === 0;
     const isLastLine = li === lines.length - 1;
 
-    // Line style — only border-radius differs between first/last/middle
+    // Line style — border-radius + optional language label via CSS pseudo-element
     const radius = isFirstLine ? "border-radius:4px 4px 0 0;" : isLastLine ? "border-radius:0 0 4px 4px;" : "";
-    const relPos = isFirstLine && !cursorOnCode ? "position:relative;" : "";
-    const lineAttrs: Record<string, string> = { style: BASE + radius + relPos };
+    const lineAttrs: Record<string, string> = { style: BASE + radius };
     if (isFirstLine) {
       lineAttrs.role = "code";
       if (lang) lineAttrs["aria-label"] = `Code block: ${lang}`;
+      if (langText) lineAttrs["data-lang"] = langText;
     }
     decos.push(Decoration.line({ attributes: lineAttrs }).range(lineStart));
 
-    // Fence lines: muted when editing, transparent when viewing.
-    // color:transparent keeps text in DOM (clickable, same height) without
-    // layout shift. No replace, no visibility:hidden, no font-size:0.
+    // Fence lines: always color:transparent in view, color:faint in edit.
+    // Pure mark decoration — no widgets, no replace, no DOM changes between modes.
     if (isFenced && (isFirstLine || isLastLine) && lineEnd > lineStart) {
       decos.push(Decoration.mark({
         attributes: {
@@ -245,43 +244,6 @@ function buildCodeBlockDecorations(
             : "color:transparent;cursor:text;"
         }
       }).range(lineStart, lineEnd));
-    }
-
-    // Language label widget — appended after first fence line text in view mode
-    if (isFenced && isFirstLine && !cursorOnCode && langText) {
-      decos.push(Decoration.widget({
-        widget: new (class extends WidgetType {
-          toDOM() {
-            const tag = document.createElement("span");
-            tag.textContent = langText;
-            tag.title = "Click to copy code";
-            tag.style.cssText = "position:absolute;right:8px;top:0;" +
-              "font-size:12px;color:var(--nexus-text-muted,#888);" +
-              "font-family:system-ui,-apple-system,sans-serif;cursor:pointer;user-select:none;" +
-              "padding:0 4px;border-radius:3px;transition:background 0.15s,color 0.15s;" +
-              "line-height:inherit;";
-            tag.addEventListener("mouseenter", () => {
-              tag.style.background = "var(--nexus-bg-muted,#e8e8e8)";
-              tag.style.color = "var(--nexus-text,#24292e)";
-            });
-            tag.addEventListener("mouseleave", () => {
-              tag.style.background = "transparent";
-              tag.style.color = "var(--nexus-text-muted,#888)";
-            });
-            tag.addEventListener("click", () => {
-              navigator.clipboard.writeText(codeValue).then(() => {
-                const orig = tag.textContent;
-                tag.textContent = "Copied!";
-                setTimeout(() => { tag.textContent = orig; }, 1500);
-              });
-            });
-            return tag;
-          }
-          eq() { return false; }
-          ignoreEvent() { return false; }
-        })(),
-        side: 1
-      }).range(lineEnd));
     }
 
     lineOffset = lineEnd + 1;
@@ -506,33 +468,36 @@ function buildDecorations(
         parentSpans.push([range.from, range.to]);
       }
 
-      // Inline formatting: hide markers via Decoration.replace (cursor is on a
-      // different line, so replace is safe and keeps CM6 heightmap accurate).
+      // Inline formatting: Decoration.replace for markers (standard CM6 approach).
+      // Ranges are always emitted; we check cursor line here to decide whether to decorate.
       const inlineStyle = getInlineMarkerStyle(range.node.type, range.source);
       if (inlineStyle && !config.renderers[range.node.type]) {
-        const { openLen, closeLen, style, attrs } = inlineStyle;
-        // Hide opening marker
-        if (openLen > 0) {
-          decos.push(Decoration.replace({}).range(range.from, range.from + openLen));
-        }
-        // Hide closing marker
-        if (closeLen > 0) {
-          decos.push(Decoration.replace({}).range(range.to - closeLen, range.to));
-        }
-        // Apply style to visible text
-        const textFrom = range.from + openLen;
-        const textTo = range.to - closeLen;
-        if (textTo > textFrom) {
-          decos.push(Decoration.mark({ attributes: { style, ...attrs } }).range(textFrom, textTo));
+        const cursorOnLine = selectionOnSameLine(range.from, range.to, doc, selection);
+        if (!cursorOnLine) {
+          const { openLen, closeLen, style, attrs } = inlineStyle;
+          if (openLen > 0) {
+            decos.push(Decoration.replace({}).range(range.from, range.from + openLen));
+          }
+          if (closeLen > 0) {
+            decos.push(Decoration.replace({}).range(range.to - closeLen, range.to));
+          }
+          const textFrom = range.from + openLen;
+          const textTo = range.to - closeLen;
+          if (textTo > textFrom) {
+            decos.push(Decoration.mark({ attributes: { style, ...attrs } }).range(textFrom, textTo));
+          }
         }
       } else {
-        const isBlock = BLOCK_NODE_TYPES.has(range.node.type);
-        decos.push(
-          Decoration.replace({
-            widget: createWidget(renderLivePreviewNode(range.node, range.source, config.renderers), isBlock),
-            block: isBlock
-          }).range(range.from, range.to)
-        );
+        const cursorOnLine = selectionOnSameLine(range.from, range.to, doc, selection);
+        if (!cursorOnLine) {
+          const isBlock = BLOCK_NODE_TYPES.has(range.node.type);
+          decos.push(
+            Decoration.replace({
+              widget: createWidget(renderLivePreviewNode(range.node, range.source, config.renderers), isBlock),
+              block: isBlock
+            }).range(range.from, range.to)
+          );
+        }
       }
     }
   }
@@ -619,5 +584,31 @@ export function createLivePreviewExtension(
     }
   });
 
-  return [field, viewCapture, linkHandler];
+  // Diagnostic: log click position resolution and scroll state
+  const clickDiag = EditorView.domEventHandlers({
+    mousedown(event, view) {
+      const rect = view.dom.getBoundingClientRect();
+      const x = event.clientX;
+      const y = event.clientY;
+      const pos = view.posAtCoords({ x, y });
+      const scrollTop = view.scrollDOM.scrollTop;
+      const docHeight = view.contentHeight;
+      const viewportFrom = view.viewport.from;
+      const viewportTo = view.viewport.to;
+      console.log(`[CLICK-DIAG] click=(${x.toFixed(0)},${y.toFixed(0)}) pos=${pos} scroll=${scrollTop.toFixed(0)} docH=${docHeight} viewport=[${viewportFrom},${viewportTo}]`);
+
+      // After decorations rebuild, check if scroll shifted
+      requestAnimationFrame(() => {
+        const newScroll = view.scrollDOM.scrollTop;
+        const newPos = view.state.selection.main.head;
+        if (Math.abs(newScroll - scrollTop) > 2) {
+          console.warn(`[CLICK-DIAG] SCROLL SHIFTED! before=${scrollTop.toFixed(0)} after=${newScroll.toFixed(0)} delta=${(newScroll - scrollTop).toFixed(0)}`);
+        }
+        console.log(`[CLICK-DIAG] after-rAF: cursorPos=${newPos} scroll=${newScroll.toFixed(0)}`);
+      });
+      return false;
+    }
+  });
+
+  return [field, viewCapture, linkHandler, clickDiag];
 }

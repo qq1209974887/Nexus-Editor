@@ -19,10 +19,10 @@
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.18.0",
-    "@codemirror/commands": "^6.10.0",
+    "@codemirror/commands": "^6.10.3",
     "@codemirror/language": "^6.12.3",
-    "@codemirror/state": "^6.5.2",
-    "@codemirror/view": "^6.36.1",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.41.0",
     "@replit/codemirror-indentation-markers": "^6.5.3",
     "highlight.js": "^11.11.0",
     "rehype-stringify": "^10.0.1",

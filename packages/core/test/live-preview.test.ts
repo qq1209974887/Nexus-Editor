@@ -225,7 +225,9 @@ describe("live preview", () => {
     });
 
     expect(container.textContent).toContain("console.log(1)");
-    expect(container.textContent).toContain("Js");
+    // Language label shown via data-lang attribute + CSS ::after
+    const langLine = container.querySelector("[data-lang]");
+    expect(langLine?.getAttribute("data-lang")).toBe("Js");
     editor.destroy();
   });
 

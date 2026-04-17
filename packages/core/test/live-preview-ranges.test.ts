@@ -23,17 +23,16 @@ describe("live preview ranges", () => {
     expect(ranges.at(-1)?.source).toBe("![Alt](https://example.com/image.png)");
   });
 
-  it("omits inline ranges when cursor is on the same line", () => {
+  it("always emits inline ranges regardless of cursor position", () => {
     const doc = "Text **bold** *italic*\n\nother line";
-    // Cursor on same line as bold+italic → both omitted
+    // Inline ranges are always emitted; buildDecorations decides styling
     const rangesSameLine = collectLivePreviewRanges(
       parse(doc),
       doc,
       [EditorSelection.cursor(8)]
     );
-    expect(rangesSameLine.map((r) => r.node.type)).toEqual([]);
+    expect(rangesSameLine.map((r) => r.node.type)).toEqual(["strong", "emphasis"]);
 
-    // Cursor on different line → both collected
     const rangesDiffLine = collectLivePreviewRanges(
       parse(doc),
       doc,
