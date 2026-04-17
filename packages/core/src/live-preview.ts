@@ -234,14 +234,15 @@ function buildCodeBlockDecorations(
     }
     decos.push(Decoration.line({ attributes: lineAttrs }).range(lineStart));
 
-    // Fence lines: muted when editing, invisible when viewing (visibility:hidden
-    // keeps line height stable — no heightmap change, no scroll desync)
+    // Fence lines: muted when editing, transparent when viewing.
+    // color:transparent keeps text in DOM (clickable, same height) without
+    // layout shift. No replace, no visibility:hidden, no font-size:0.
     if (isFenced && (isFirstLine || isLastLine) && lineEnd > lineStart) {
       decos.push(Decoration.mark({
         attributes: {
           style: cursorOnCode
             ? "color:var(--nexus-text-faint,#bbb);"
-            : "visibility:hidden;"
+            : "color:transparent;cursor:text;"
         }
       }).range(lineStart, lineEnd));
     }
