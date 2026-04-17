@@ -1,4 +1,4 @@
-import { StateField, type Extension, type Range, type SelectionRange, type Transaction } from "@codemirror/state";
+import { RangeSet, StateField, type Extension, type Range, type SelectionRange, type Transaction } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import hljs from "highlight.js";
 import type { Code, FootnoteDefinition, FootnoteReference, Heading, List, Root, Table } from "mdast";
@@ -392,18 +392,25 @@ function getInlineMarkerStyle(nodeType: string, source: string): InlineMarkerSty
   }
 }
 
+interface BuildResult {
+  decorations: DecorationSet;
+  /** Ranges where the cursor should skip (hidden inline markers). */
+  atomicRanges: RangeSet<any>;
+}
+
 function buildDecorations(
   doc: string,
   selection: readonly SelectionRange[],
   parser: ParserLike,
   config: NormalizedLivePreviewConfig,
   viewRef: { current: EditorView | null }
-): DecorationSet {
-  if (!config.enabled) return Decoration.none;
+): BuildResult {
+  if (!config.enabled) return { decorations: Decoration.none, atomicRanges: RangeSet.empty };
 
   const ast = parseDocument(parser, doc);
   const ranges = collectLivePreviewRanges(ast, doc, selection);
   const decos: Range<Decoration>[] = [];
+  const atomics: Range<Decoration>[] = [];
   const parentSpans: [number, number][] = [];
 
   for (const range of ranges) {
@@ -512,13 +519,15 @@ function buildDecorations(
       const inlineStyle = getInlineMarkerStyle(range.node.type, range.source);
       if (inlineStyle && !config.renderers[range.node.type]) {
         const { openLen, closeLen, style, attrs } = inlineStyle;
-        // Hide opening marker
+        // Hide opening marker + mark as atomic (cursor skips)
         if (openLen > 0) {
           decos.push(Decoration.replace({}).range(range.from, range.from + openLen));
+          atomics.push(Decoration.mark({}).range(range.from, range.from + openLen));
         }
-        // Hide closing marker
+        // Hide closing marker + mark as atomic
         if (closeLen > 0) {
           decos.push(Decoration.replace({}).range(range.to - closeLen, range.to));
+          atomics.push(Decoration.mark({}).range(range.to - closeLen, range.to));
         }
         // Apply style to visible text
         const textFrom = range.from + openLen;
@@ -538,7 +547,10 @@ function buildDecorations(
     }
   }
 
-  return Decoration.set(decos, true);
+  return {
+    decorations: Decoration.set(decos, true),
+    atomicRanges: RangeSet.of(atomics.sort((a, b) => a.from - b.from), true),
+  };
 }
 
 export function createLivePreviewExtension(
@@ -555,22 +567,26 @@ export function createLivePreviewExtension(
 
   const viewRef: { current: EditorView | null } = { current: null };
 
-  const field = StateField.define<DecorationSet>({
+  const field = StateField.define<BuildResult>({
     create(state) {
       return buildDecorations(state.doc.toString(), state.selection.ranges, parser, normalized, viewRef);
     },
-    update(decos: DecorationSet, tr: Transaction) {
+    update(prev: BuildResult, tr: Transaction) {
       if (isTableEditing()) {
-        // During table editing/dragging: only remap positions, never rebuild
-        return tr.docChanged ? decos.map(tr.changes) : decos;
+        return tr.docChanged
+          ? { decorations: prev.decorations.map(tr.changes), atomicRanges: RangeSet.empty }
+          : prev;
       }
       if (tr.docChanged || tr.selection) {
         return buildDecorations(tr.state.doc.toString(), tr.state.selection.ranges, parser, normalized, viewRef);
       }
-      return decos;
+      return prev;
     },
     provide(field) {
-      return EditorView.decorations.from(field);
+      return [
+        EditorView.decorations.from(field, (v) => v.decorations),
+        EditorView.atomicRanges.of((view) => view.state.field(field).atomicRanges),
+      ];
     }
   });
 
