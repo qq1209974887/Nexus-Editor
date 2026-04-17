@@ -207,7 +207,7 @@ function buildCodeBlockDecorations(
 ): void {
   const source = range.source;
   const lines = source.split("\n");
-  const cursorOnCode = selectionIntersects(range.from, range.to, selection);
+  const cursorOnCode = selectionIntersects(range.from, range.to, selection, true);
   const firstNewline = source.indexOf("\n");
   const isFenced = /^[ \t]*(`{3,}|~{3,})/.test(source);
 
