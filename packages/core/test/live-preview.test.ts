@@ -348,6 +348,41 @@ describe("live preview", () => {
     editor.destroy();
   });
 
+  it("renders inline markdown links inside table cells as <a> elements", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({
+      container,
+      initialValue:
+        "| Name | Link |\n|---|---|\n| Sonali | [LinkedIn](https://linkedin.com/in/sonali) |\n| Rich | [@RWong](https://twitter.com/RWong) |",
+      livePreview: true,
+      plugins: [createGfmPreset()],
+    });
+
+    const links = container.querySelectorAll<HTMLAnchorElement>("table a[href]");
+    expect(links.length).toBe(2);
+    expect(links[0].getAttribute("href")).toBe("https://linkedin.com/in/sonali");
+    expect(links[0].textContent).toBe("LinkedIn");
+    expect(links[1].getAttribute("href")).toBe("https://twitter.com/RWong");
+    expect(links[1].textContent).toBe("@RWong");
+    editor.destroy();
+  });
+
+  it("renders inline bold/em/code inside table cells", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({
+      container,
+      initialValue:
+        "| Style | Sample |\n|---|---|\n| Bold | **strong** |\n| Italic | *em* |\n| Code | `code` |",
+      livePreview: true,
+      plugins: [createGfmPreset()],
+    });
+
+    expect(container.querySelector("table strong")?.textContent).toBe("strong");
+    expect(container.querySelector("table em")?.textContent).toBe("em");
+    expect(container.querySelector("table code")?.textContent).toBe("code");
+    editor.destroy();
+  });
+
   it("normalises irregular row widths to the max column count (no overflow)", () => {
     const container = document.createElement("div");
     const editor = createEditor({

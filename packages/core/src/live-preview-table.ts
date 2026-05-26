@@ -23,6 +23,70 @@ function extractCellText(cell: any): string {
     .join("");
 }
 
+/**
+ * Render an inline mdast node into DOM. Supports the inline subset that
+ * appears inside table cells: text, link, strong, emphasis, delete,
+ * inlineCode. Anything else falls back to its text representation so the
+ * user still sees content (just unstyled).
+ */
+function renderInlineMdast(node: any): Node {
+  if (!node) return document.createTextNode("");
+  switch (node.type) {
+    case "text":
+      return document.createTextNode(typeof node.value === "string" ? node.value : "");
+    case "link": {
+      const a = document.createElement("a");
+      a.href = typeof node.url === "string" ? node.url : "#";
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.style.cssText =
+        "color:var(--nexus-accent);text-decoration:underline;cursor:pointer;";
+      // Stop CM6's editor-level mousedown handler from reading this as a
+      // cursor-placement click — we want the browser's native link click
+      // to win so the user can ⌘-click open in a new tab.
+      a.addEventListener("mousedown", (e) => e.stopPropagation());
+      for (const child of node.children ?? []) a.appendChild(renderInlineMdast(child));
+      return a;
+    }
+    case "strong": {
+      const el = document.createElement("strong");
+      for (const child of node.children ?? []) el.appendChild(renderInlineMdast(child));
+      return el;
+    }
+    case "emphasis": {
+      const el = document.createElement("em");
+      for (const child of node.children ?? []) el.appendChild(renderInlineMdast(child));
+      return el;
+    }
+    case "delete": {
+      const el = document.createElement("del");
+      for (const child of node.children ?? []) el.appendChild(renderInlineMdast(child));
+      return el;
+    }
+    case "inlineCode": {
+      const el = document.createElement("code");
+      el.textContent = typeof node.value === "string" ? node.value : "";
+      el.style.cssText =
+        "background:var(--nexus-bg-muted);padding:1px 4px;border-radius:3px;font-family:monospace;";
+      return el;
+    }
+    default: {
+      if (Array.isArray(node.children)) {
+        const frag = document.createDocumentFragment();
+        for (const child of node.children) frag.appendChild(renderInlineMdast(child));
+        return frag;
+      }
+      return document.createTextNode(typeof node.value === "string" ? node.value : "");
+    }
+  }
+}
+
+function renderCellRich(td: HTMLElement, astCell: any): void {
+  td.textContent = "";
+  if (!astCell || !Array.isArray(astCell.children)) return;
+  for (const child of astCell.children) td.appendChild(renderInlineMdast(child));
+}
+
 const GRIP_BG = "var(--nexus-bg-muted)";
 const GRIP_BG_HOVER = "var(--nexus-border)";
 const SELECT_BG = "rgba(124, 108, 250, 0.12)";
@@ -678,7 +742,27 @@ export class EditableTableWidget extends WidgetType {
         const astCell = colIdx < astCells.length ? astCells[colIdx] : undefined;
         const td = document.createElement(isHeader ? "th" : "td");
         td.className = "nexus-cell";
-        td.textContent = astCell ? extractCellText(astCell) : "";
+        // Stash the raw markdown source for this cell so we can (a) render
+        // it as rich DOM by default — links, bold, code, etc. — and (b)
+        // swap back to the raw text when the cell is focused for editing.
+        // Without this, `extractCellText` flattens `[X](url)` to `X` and the
+        // source-line dispatch in the input handler would clobber the link.
+        let rawSource = "";
+        const startOffset = astCell?.position?.start?.offset;
+        const endOffset = astCell?.position?.end?.offset;
+        if (typeof startOffset === "number" && typeof endOffset === "number") {
+          const sliceStart = startOffset - self.tableFrom;
+          const sliceEnd = endOffset - self.tableFrom;
+          if (sliceStart >= 0 && sliceEnd >= sliceStart && sliceEnd <= self.source.length) {
+            rawSource = self.source.slice(sliceStart, sliceEnd).trim();
+          }
+        }
+        td.dataset.source = rawSource;
+        if (astCell && Array.isArray(astCell.children) && astCell.children.length > 0) {
+          renderCellRich(td, astCell);
+        } else {
+          td.textContent = rawSource;
+        }
         td.style.cssText =
           "border-bottom:1px solid var(--nexus-border);border-right:1px solid var(--nexus-border);padding:8px 12px;" +
           "text-align:left;outline:none;min-width:60px;vertical-align:top;cursor:text;";
@@ -734,17 +818,34 @@ export class EditableTableWidget extends WidgetType {
           document.addEventListener("mouseup", onCellMouseUp);
         });
 
-        td.addEventListener("focus", () => { acquireEditingLock("focus"); clearRangeSelection(); });
+        td.addEventListener("focus", () => {
+          acquireEditingLock("focus");
+          clearRangeSelection();
+          // Swap rendered rich DOM for the raw markdown source so the user
+          // edits the actual `[text](url)` text instead of just "text".
+          td.textContent = td.dataset.source ?? "";
+        });
         td.addEventListener("blur", () => {
           releaseEditingLock("focus");
           td.contentEditable = "false";
+          // After blur the next CM6 update will rebuild this widget with
+          // fresh mdast, so we don't manually re-render rich here — that
+          // would cause a flicker between the blur and the next update.
         });
 
         td.addEventListener("input", () => {
           const v = self.viewRef.current;
           if (!v || sourceLineIdx === undefined) return;
+          // The currently edited cell holds the user's in-progress text; sync
+          // its dataset.source so we read a coherent set of values below.
+          td.dataset.source = td.textContent ?? "";
           const vals: string[] = [];
-          tr.querySelectorAll(".nexus-cell").forEach((el) => vals.push(el.textContent ?? ""));
+          tr.querySelectorAll<HTMLElement>(".nexus-cell").forEach((el) => {
+            // Use dataset.source as the authoritative source for every cell.
+            // Untouched cells still display rich DOM (links, bold) — reading
+            // their textContent would strip URLs and lose inline markdown.
+            vals.push(el.dataset.source ?? el.textContent ?? "");
+          });
           const newLine = "| " + vals.join(" | ") + " |";
           let off = self.tableFrom;
           for (let i = 0; i < sourceLineIdx; i++) off += sourceLines[i].length + 1;

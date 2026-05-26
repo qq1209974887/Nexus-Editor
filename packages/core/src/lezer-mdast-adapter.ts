@@ -276,8 +276,30 @@ function adaptInlineNode(source: Source, node: SyntaxNode): PhrasingContent | nu
       return out;
     }
     case "InlineCode": {
+      // Lezer's InlineCode does NOT emit a CodeText child — the value is the
+      // raw range between the opening and closing CodeMark tokens. Locate
+      // them and slice; fall back to a CodeText child if a future Lezer
+      // version starts emitting one.
+      let value = "";
       const codeText = findChildByName(node, "CodeText");
-      const value = codeText ? readSlice(source, codeText.from, codeText.to) : "";
+      if (codeText) {
+        value = readSlice(source, codeText.from, codeText.to);
+      } else {
+        // Find first and last CodeMark children to bracket the body.
+        let firstMark: SyntaxNode | null = null;
+        let lastMark: SyntaxNode | null = null;
+        for (let c = node.firstChild; c; c = c.nextSibling) {
+          if (c.name !== "CodeMark") continue;
+          if (!firstMark) firstMark = c;
+          lastMark = c;
+        }
+        if (firstMark && lastMark && lastMark.from >= firstMark.to) {
+          value = readSlice(source, firstMark.to, lastMark.from);
+        } else {
+          // No marks at all: slice the whole node and strip surrounding `s.
+          value = readSlice(source, node.from, node.to).replace(/^`+|`+$/g, "");
+        }
+      }
       const out: InlineCode = {
         type: "inlineCode",
         value,
