@@ -1,8 +1,13 @@
 import type { Root } from "mdast";
-import { EditorView } from "@codemirror/view";
+import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { Plugin } from "unified";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEditor } from "../src/index";
+
+function requireEditorView(view: EditorView | null): EditorView {
+  if (!view) throw new Error("Expected CodeMirror view to be captured");
+  return view;
+}
 
 afterEach(() => {
   vi.useRealTimers();
@@ -184,6 +189,43 @@ describe("createEditor", () => {
     vi.advanceTimersByTime(20);
 
     expect(docs).toEqual(["second"]);
+    editor.destroy();
+  });
+
+  it("defers change emission until IME composition ends", async () => {
+    const container = document.createElement("div");
+    const docs: string[] = [];
+    let capturedView: EditorView | null = null;
+    const captureView = ViewPlugin.fromClass(
+      class {
+        constructor(readonly view: EditorView) {
+          capturedView = view;
+        }
+      }
+    );
+    const editor = createEditor({
+      container,
+      plugins: [{ name: "capture-view", cmExtensions: [captureView] }],
+      onChange(doc) {
+        docs.push(doc);
+      }
+    });
+
+    expect(capturedView).not.toBeNull();
+    const view = requireEditorView(capturedView);
+    view.dispatch({
+      changes: { from: 0, insert: "wjj" },
+      userEvent: "input.type.compose",
+    });
+
+    expect(editor.getDocument()).toBe("wjj");
+    expect(docs).toEqual([]);
+
+    vi.useFakeTimers();
+    view.contentDOM.dispatchEvent(new Event("compositionend", { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(80);
+
+    expect(docs).toEqual(["wjj"]);
     editor.destroy();
   });
 

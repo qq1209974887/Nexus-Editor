@@ -28,6 +28,36 @@ import { computeSlashState } from "./slash-state";
 import type { EditorAPI, EditorConfig, EditorEventMap, NexusPlugin, ParserLike, TocEntry } from "./types";
 import { createWidgetExtension } from "./widget-extension";
 
+const FLOATBOAT_MARKDOWN_DEBUG_STORAGE_KEY = "floatboat:markdown-debug";
+const COMPOSITION_FLUSH_DELAY_MS = 60;
+
+interface NexusDebugGlobal {
+  __FLOATBOAT_MARKDOWN_DEBUG__?: boolean;
+  localStorage?: {
+    getItem(key: string): string | null;
+  };
+}
+
+function isNexusDebugEnabled(): boolean {
+  const debugGlobal = globalThis as NexusDebugGlobal;
+  if (debugGlobal.__FLOATBOAT_MARKDOWN_DEBUG__ === true) return true;
+
+  try {
+    return debugGlobal.localStorage?.getItem(FLOATBOAT_MARKDOWN_DEBUG_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function debugNexus(message: string, details?: Record<string, unknown>): void {
+  if (!isNexusDebugEnabled()) return;
+  if (details) {
+    console.debug(`[NexusEditor] ${message}`, details);
+    return;
+  }
+  console.debug(`[NexusEditor] ${message}`);
+}
+
 function createEmptyAst(): Root {
   return {
     type: "root",
@@ -137,6 +167,12 @@ function createTransformProcessor(plugins: NexusPlugin[]): { runSync(tree: Root)
 
 export function createEditor(config: EditorConfig): EditorAPI {
   const plugins = config.plugins ?? [];
+  debugNexus("create", {
+    initialLength: (config.initialValue ?? "").length,
+    pluginNames: plugins.map((plugin) => plugin.name),
+    readOnly: config.readOnly === true,
+    direction: config.direction ?? "ltr",
+  });
   // `parser` is retained as an optional escape hatch for tests / consumers
   // that pass a custom mdast pipeline. It is NO LONGER on the editor's hot
   // path — the default code path uses lezerAstFromAnywhere which runs a
@@ -168,6 +204,8 @@ export function createEditor(config: EditorConfig): EditorAPI {
   let destroyed = false;
   let focused = false;
   let parseTimer: ReturnType<typeof setTimeout> | undefined;
+  let compositionFlushTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingCompositionMarkdown: string | null = null;
   // Initial AST: when a custom parser is provided, honour it (tests rely on
   // this — they install plugins that mutate the tree). Otherwise use the
   // Lezer string parser, which is dramatically faster than remark and
@@ -237,6 +275,40 @@ export function createEditor(config: EditorConfig): EditorAPI {
     }, parseDelayMs);
   }
 
+  function queueCompositionChange(markdown: string) {
+    pendingCompositionMarkdown = markdown;
+    if (parseTimer) {
+      clearTimeout(parseTimer);
+      parseTimer = undefined;
+    }
+  }
+
+  function flushCompositionChange(view: EditorView, reason: string) {
+    if (compositionFlushTimer) {
+      clearTimeout(compositionFlushTimer);
+      compositionFlushTimer = undefined;
+    }
+
+    compositionFlushTimer = setTimeout(() => {
+      compositionFlushTimer = undefined;
+      if (destroyed || view.compositionStarted || pendingCompositionMarkdown === null) {
+        return;
+      }
+
+      const markdown = view.state.doc.toString();
+      pendingCompositionMarkdown = null;
+      debugNexus("composition-flush", {
+        reason,
+        documentLength: markdown.length,
+        selection: {
+          anchor: view.state.selection.main.anchor,
+          head: view.state.selection.main.head,
+        },
+      });
+      scheduleChange(markdown);
+    }, COMPOSITION_FLUSH_DELAY_MS);
+  }
+
   const themeExt = createThemeExtension(config.theme ?? lightTheme);
   const tabSizeExt = config.tabSize && config.tabSize !== 4
     ? EditorState.tabSize.of(config.tabSize)
@@ -274,16 +346,61 @@ export function createEditor(config: EditorConfig): EditorAPI {
           blur() {
             setFocused(false);
             return false;
+          },
+          compositionstart(_event, view) {
+            debugNexus("composition-start", {
+              documentLength: view.state.doc.length,
+              selection: {
+                anchor: view.state.selection.main.anchor,
+                head: view.state.selection.main.head,
+              },
+            });
+            return false;
+          },
+          compositionend(_event, view) {
+            debugNexus("composition-end", {
+              documentLength: view.state.doc.length,
+              hasPendingChange: pendingCompositionMarkdown !== null,
+            });
+            flushCompositionChange(view, "compositionend");
+            return false;
           }
         }),
         EditorView.updateListener.of((update) => {
+          const silent = update.transactions.some((t) => t.annotation(silentDocChange) === true);
+          const compositionTransaction = update.transactions.some((t) => t.isUserEvent("input.type.compose"));
+          if (update.docChanged || update.selectionSet) {
+            const sel = update.state.selection.main;
+            debugNexus("update", {
+              docChanged: update.docChanged,
+              selectionSet: update.selectionSet,
+              silent,
+              composing: update.view.composing,
+              compositionStarted: update.view.compositionStarted,
+              compositionTransaction,
+              documentLength: update.state.doc.length,
+              selection: { anchor: sel.anchor, head: sel.head },
+            });
+          }
+
           if (update.docChanged) {
             // Skip onChange/onParse work for transactions explicitly flagged as
             // "silent" (e.g. setDocument({ silent: true }) used when loading a
             // file from disk — that's not a user edit).
-            const silent = update.transactions.some((t) => t.annotation(silentDocChange) === true);
             if (!silent) {
-              scheduleChange(update.state.doc.toString());
+              const markdown = update.state.doc.toString();
+              if (compositionTransaction || update.view.composing || update.view.compositionStarted) {
+                debugNexus("composition-change-queued", {
+                  documentLength: markdown.length,
+                  compositionTransaction,
+                  composing: update.view.composing,
+                  compositionStarted: update.view.compositionStarted,
+                });
+                queueCompositionChange(markdown);
+              } else {
+                pendingCompositionMarkdown = null;
+                scheduleChange(markdown);
+              }
             }
           }
 
@@ -424,6 +541,13 @@ export function createEditor(config: EditorConfig): EditorAPI {
         return;
       }
 
+      const before = view.state.selection.main;
+      debugNexus("setSelection", {
+        before: { anchor: before.anchor, head: before.head },
+        next: { anchor, head },
+        documentLength: view.state.doc.length,
+      });
+
       view.dispatch({
         selection: { anchor, head },
         scrollIntoView: true
@@ -435,6 +559,14 @@ export function createEditor(config: EditorConfig): EditorAPI {
       }
 
       const silent = opts?.silent === true;
+      const beforeSelection = view.state.selection.main;
+      debugNexus("setDocument", {
+        silent,
+        oldLength: view.state.doc.length,
+        nextLength: next.length,
+        beforeSelection: { anchor: beforeSelection.anchor, head: beforeSelection.head },
+      });
+
       view.dispatch({
         changes: {
           from: 0,
@@ -514,12 +646,24 @@ export function createEditor(config: EditorConfig): EditorAPI {
       return { characters, words, lines };
     },
     destroy() {
+      debugNexus("destroy", {
+        documentLength: view.state.doc.length,
+        selection: {
+          anchor: view.state.selection.main.anchor,
+          head: view.state.selection.main.head,
+        },
+      });
       destroyed = true;
       focused = false;
       if (parseTimer) {
         clearTimeout(parseTimer);
         parseTimer = undefined;
       }
+      if (compositionFlushTimer) {
+        clearTimeout(compositionFlushTimer);
+        compositionFlushTimer = undefined;
+      }
+      pendingCompositionMarkdown = null;
       emitter.clear();
       view.destroy();
     }

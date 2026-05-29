@@ -1,7 +1,32 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 
 import { createGfmPreset } from "../../preset-gfm/src/index";
 import { createEditor } from "../src/index";
+
+beforeAll(() => {
+  if (!("getClientRects" in Range.prototype)) {
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [] as unknown as DOMRectList,
+    });
+  }
+  if (!("getBoundingClientRect" in Range.prototype)) {
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new DOMRect(),
+    });
+  }
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+function requireEditorView(view: EditorView | null): EditorView {
+  if (!view) throw new Error("Expected CodeMirror view to be captured");
+  return view;
+}
 
 describe("live preview", () => {
   // ── Inline formatting ──
@@ -79,6 +104,47 @@ describe("live preview", () => {
     const text = container.textContent ?? "";
     expect(text).toContain("changed");
     expect(text).not.toContain("**");
+    editor.destroy();
+  });
+
+  it("keeps live preview decorations stable during IME composition", async () => {
+    const container = document.createElement("div");
+    const source = "Text **bold**\n\nend";
+    let capturedView: EditorView | null = null;
+    const captureView = ViewPlugin.fromClass(
+      class {
+        constructor(readonly view: EditorView) {
+          capturedView = view;
+        }
+      }
+    );
+    const editor = createEditor({
+      container,
+      initialValue: source,
+      livePreview: true,
+      plugins: [{ name: "capture-view", cmExtensions: [captureView] }],
+    });
+
+    editor.setSelection(source.length);
+    expect(container.textContent).not.toContain("**");
+
+    const insertAt = source.indexOf("bold");
+    const view = requireEditorView(capturedView);
+    view.dispatch({
+      changes: { from: insertAt, insert: "文" },
+      selection: { anchor: insertAt + 1 },
+      userEvent: "input.type.compose",
+    });
+
+    expect(editor.getDocument()).toBe("Text **文bold**\n\nend");
+    expect(container.textContent).not.toContain("**");
+
+    vi.useFakeTimers();
+    view.contentDOM.dispatchEvent(new Event("compositionend", { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(80);
+    vi.useRealTimers();
+
+    expect(container.textContent).toContain("**文bold**");
     editor.destroy();
   });
 
@@ -214,6 +280,111 @@ describe("live preview", () => {
     });
 
     expect(container.querySelector("[data-heading-level='1']")?.textContent).toBe("Heading");
+    editor.destroy();
+  });
+
+  it("shows raw heading markdown while IME composition is active", async () => {
+    const container = document.createElement("div");
+    const source = "# 第一章\n\nend";
+    let capturedView: EditorView | null = null;
+    const captureView = ViewPlugin.fromClass(
+      class {
+        constructor(readonly view: EditorView) {
+          capturedView = view;
+        }
+      }
+    );
+    const editor = createEditor({
+      container,
+      initialValue: source,
+      livePreview: true,
+      plugins: [{ name: "capture-view", cmExtensions: [captureView] }],
+    });
+    const headingEnd = source.indexOf("\n");
+    editor.setSelection(headingEnd);
+    expect(container.querySelector("[data-heading-level='1']")).not.toBeNull();
+    expect(container.textContent).not.toContain("# 第一章");
+
+    const view = requireEditorView(capturedView);
+    vi.useFakeTimers();
+    view.contentDOM.dispatchEvent(new Event("compositionstart", { bubbles: true }));
+    expect(container.querySelector("[data-heading-level='1']")).toBeNull();
+    expect(container.textContent).toContain("# 第一章");
+
+    view.dispatch({
+      changes: { from: headingEnd, insert: "一" },
+      selection: { anchor: headingEnd + 1 },
+      userEvent: "input.type.compose",
+    });
+
+    expect(editor.getDocument()).toBe("# 第一章一\n\nend");
+    expect(container.querySelector("[data-heading-level='1']")).toBeNull();
+    expect(container.textContent).toContain("# 第一章一");
+
+    view.contentDOM.dispatchEvent(new Event("compositionend", { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(80);
+    vi.useRealTimers();
+
+    expect(container.querySelector("[data-heading-level='1']")?.textContent).toBe("第一章一");
+    expect(container.textContent).not.toContain("# 第一章一");
+    editor.destroy();
+  });
+
+  it("keeps empty ATX heading input on the same line during composition", async () => {
+    const container = document.createElement("div");
+    const lines = [
+      ...Array.from({ length: 22 }, (_, index) => `line ${index + 1}`),
+      "### ",
+      "end",
+    ];
+    const source = lines.join("\n");
+    let capturedView: EditorView | null = null;
+    let effectOnlyUpdates = 0;
+    const captureView = ViewPlugin.fromClass(
+      class {
+        constructor(readonly view: EditorView) {
+          capturedView = view;
+        }
+
+        update(update: ViewUpdate) {
+          if (!update.docChanged && !update.selectionSet) {
+            effectOnlyUpdates++;
+          }
+        }
+      }
+    );
+    const editor = createEditor({
+      container,
+      initialValue: source,
+      livePreview: true,
+      plugins: [{ name: "capture-view", cmExtensions: [captureView] }],
+    });
+    const headingStart = source.indexOf("### ");
+    const insertAt = headingStart + "### ".length;
+    editor.setSelection(insertAt);
+
+    const view = requireEditorView(capturedView);
+    vi.useFakeTimers();
+    view.contentDOM.dispatchEvent(new Event("compositionstart", { bubbles: true }));
+
+    expect(effectOnlyUpdates).toBe(0);
+    expect(editor.getDocument().split("\n")[22]).toBe("### ");
+
+    view.dispatch({
+      changes: { from: insertAt, insert: "ddsadsada" },
+      selection: { anchor: insertAt + "ddsadsada".length },
+      userEvent: "input.type.compose",
+    });
+
+    expect(editor.getDocument().split("\n")[22]).toBe("### ddsadsada");
+    expect(editor.getDocument().split("\n")[23]).toBe("end");
+
+    view.contentDOM.dispatchEvent(new Event("compositionend", { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(80);
+    vi.useRealTimers();
+
+    expect(editor.getDocument().split("\n")[22]).toBe("### ddsadsada");
+    expect(editor.getDocument().split("\n")[23]).toBe("end");
     editor.destroy();
   });
 

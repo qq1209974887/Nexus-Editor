@@ -1,4 +1,4 @@
-import { type EditorState, StateField, type Extension, type Range, type SelectionRange, type Transaction } from "@codemirror/state";
+import { type EditorState, StateEffect, StateField, type Extension, type Range, type SelectionRange, type Transaction } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import { ensureSyntaxTree } from "@codemirror/language";
 import type { Code, FootnoteDefinition, FootnoteReference, Heading, Html, List, Root, Table } from "mdast";
@@ -17,6 +17,8 @@ import type {
   LivePreviewNodeType,
   LivePreviewRenderer,
 } from "./types";
+
+const COMPOSITION_REDECORATE_DELAY_MS = 60;
 
 interface NormalizedLivePreviewConfig {
   enabled: boolean;
@@ -422,15 +424,26 @@ const HEADING_FONT_SIZE: Record<number, string> = {
   1: "1.6em", 2: "1.4em", 3: "1.2em", 4: "1.1em", 5: "1.05em", 6: "1em"
 };
 
+function shouldRebuildHeadingForCompositionStart(view: EditorView): boolean {
+  const head = view.state.selection.main.head;
+  const line = view.state.doc.lineAt(head);
+  return /^\s{0,3}#{1,6}\s+\S/.test(line.text);
+}
+
 function buildHeadingDecorations(
   range: { from: number; to: number; node: Heading },
+  doc: string,
   selection: readonly SelectionRange[],
-  decos: Range<Decoration>[]
+  decos: Range<Decoration>[],
+  compositionActive: boolean
 ): void {
   const firstChild = range.node.children[0];
   const textStart = firstChild?.position?.start?.offset;
 
   if (typeof textStart === "number" && textStart > range.from && textStart <= range.to) {
+    if (compositionActive && selectionOnSameLine(range.from, range.to, doc, selection)) {
+      return;
+    }
     const fontSize = HEADING_FONT_SIZE[range.node.depth] ?? "1em";
     const cursorOnHeading = selectionIntersects(range.from, range.to, selection);
 
@@ -983,6 +996,7 @@ interface BuildContext {
   ast?: Root;
   /** Optional pre-computed code highlight tokens for the snapshot's fenced blocks. */
   codeTokens?: CodeHighlightToken[];
+  compositionActive?: boolean;
 }
 
 function buildDecorations(
@@ -1017,7 +1031,13 @@ function buildDecorations(
     if (parentSpans.some(([from, to]) => range.from >= from && range.to <= to)) continue;
 
     if (range.node.type === "heading" && !config.renderers.heading) {
-      buildHeadingDecorations(range as { from: number; to: number; node: Heading }, selection, decos);
+      buildHeadingDecorations(
+        range as { from: number; to: number; node: Heading },
+        doc,
+        selection,
+        decos,
+        ctx.compositionActive === true
+      );
     } else if (range.node.type === "table" && !config.renderers.table) {
       decos.push(
         Decoration.replace({
@@ -1259,13 +1279,19 @@ export function createLivePreviewExtension(
   // walk and the hljs run when the source hasn't changed. Edits replace the
   // cache via the docChanged branch below.
   let lastBuilt: { doc: string; ast: Root; codeTokens: CodeHighlightToken[] } | null = null;
+  let compositionActive = false;
+  const rebuildForCompositionStart = StateEffect.define<null>();
+  const rebuildAfterComposition = StateEffect.define<null>();
 
   function build(state: EditorState, selection: readonly SelectionRange[], reuseCache: boolean) {
     const docStr = state.doc.toString();
     const ctx: BuildContext = reuseCache && lastBuilt && lastBuilt.doc === docStr
       ? { ast: lastBuilt.ast, codeTokens: lastBuilt.codeTokens }
       : {};
-    const out = buildDecorations(state, selection, normalized, viewRef, ctx);
+    const out = buildDecorations(state, selection, normalized, viewRef, {
+      ...ctx,
+      compositionActive,
+    });
     lastBuilt = { doc: docStr, ast: out.ast, codeTokens: out.codeTokens };
     return out.decos;
   }
@@ -1276,6 +1302,21 @@ export function createLivePreviewExtension(
     },
     update(decos: DecorationSet, tr: Transaction) {
       if (isTableEditing()) {
+        return tr.docChanged ? decos.map(tr.changes) : decos;
+      }
+      if (tr.effects.some((effect) => effect.is(rebuildForCompositionStart))) {
+        compositionActive = true;
+        return build(tr.state, tr.state.selection.ranges, true);
+      }
+      if (tr.effects.some((effect) => effect.is(rebuildAfterComposition))) {
+        compositionActive = false;
+        return build(tr.state, tr.state.selection.ranges, false);
+      }
+      if (tr.isUserEvent("input.type.compose")) {
+        compositionActive = true;
+        return tr.docChanged ? decos.map(tr.changes) : decos;
+      }
+      if (compositionActive) {
         return tr.docChanged ? decos.map(tr.changes) : decos;
       }
       if (tr.docChanged) {
@@ -1311,6 +1352,32 @@ export function createLivePreviewExtension(
       }
     }
   );
+
+  const compositionHandler = EditorView.domEventHandlers({
+    compositionstart(_event, view) {
+      if (!shouldRebuildHeadingForCompositionStart(view)) {
+        return false;
+      }
+      try {
+        view.dispatch({ effects: rebuildForCompositionStart.of(null) });
+      } catch {
+        // composition 事件到达时 view 可能已经销毁。
+      }
+      return false;
+    },
+    compositionend(_event, view) {
+      setTimeout(() => {
+        if (view.compositionStarted) return;
+        try {
+          view.dispatch({ effects: rebuildAfterComposition.of(null) });
+        } catch {
+          // The view may have been destroyed before the deferred composition
+          // cleanup runs.
+        }
+      }, COMPOSITION_REDECORATE_DELAY_MS);
+      return false;
+    },
+  });
 
   // Click to navigate links; arrow-key into link to edit
   const linkHandler = EditorView.domEventHandlers({
@@ -1355,5 +1422,5 @@ export function createLivePreviewExtension(
     }
   });
 
-  return [field, viewCapture, linkHandler, createLivePreviewDiagnostics()];
+  return [field, viewCapture, compositionHandler, linkHandler, createLivePreviewDiagnostics()];
 }

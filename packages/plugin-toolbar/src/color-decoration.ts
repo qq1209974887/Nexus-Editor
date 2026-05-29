@@ -130,6 +130,12 @@ const colorDecoPlugin = ViewPlugin.fromClass(
       this.decorations = buildDecorations(view);
     }
     update(update: ViewUpdate) {
+      if (update.transactions.some((tr) => tr.isUserEvent("input.type.compose"))) {
+        if (update.docChanged) {
+          this.decorations = this.decorations.map(update.changes);
+        }
+        return;
+      }
       if (update.docChanged || update.selectionSet) {
         this.decorations = buildDecorations(update.view);
       }

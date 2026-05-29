@@ -4,10 +4,12 @@ import {
   type CompletionResult,
   type Completion
 } from "@codemirror/autocomplete";
-import { StateField, type Extension, type Range, type Transaction } from "@codemirror/state";
+import { StateEffect, StateField, type Extension, type Range, type Transaction } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView } from "@codemirror/view";
 
 import type { NexusPlugin } from "./types";
+
+const COMPOSITION_REDECORATE_DELAY_MS = 60;
 
 /**
  * Obsidian-style bidirectional wiki link extension.
@@ -252,6 +254,7 @@ export function createWikilinksExtension(options: WikilinksOptions = {}): Extens
   const resolve = options.resolve;
   const onNavigate = options.onNavigate;
   const ignore = options.ignore;
+  const rebuildAfterComposition = StateEffect.define<null>();
 
   // A small effect to force redecoration when the host announces the index has
   // changed (e.g. a new note was created elsewhere). Hosts do this by
@@ -264,6 +267,13 @@ export function createWikilinksExtension(options: WikilinksOptions = {}): Extens
       return buildWikiLinkDecorations(state.doc.toString(), heads, resolve, ignore);
     },
     update(decos: DecorationSet, tr: Transaction) {
+      if (tr.effects.some((effect) => effect.is(rebuildAfterComposition))) {
+        const heads = tr.state.selection.ranges.map((r) => r.head);
+        return buildWikiLinkDecorations(tr.state.doc.toString(), heads, resolve, ignore);
+      }
+      if (tr.isUserEvent("input.type.compose")) {
+        return tr.docChanged ? decos.map(tr.changes) : decos;
+      }
       if (tr.docChanged || tr.selection) {
         const heads = tr.state.selection.ranges.map((r) => r.head);
         return buildWikiLinkDecorations(tr.state.doc.toString(), heads, resolve, ignore);
@@ -272,6 +282,20 @@ export function createWikilinksExtension(options: WikilinksOptions = {}): Extens
     },
     provide(f) {
       return EditorView.decorations.from(f);
+    },
+  });
+
+  const compositionHandler = EditorView.domEventHandlers({
+    compositionend(_event, view) {
+      setTimeout(() => {
+        if (view.compositionStarted) return;
+        try {
+          view.dispatch({ effects: rebuildAfterComposition.of(null) });
+        } catch {
+          // The editor may already be gone by the time the IME cleanup runs.
+        }
+      }, COMPOSITION_REDECORATE_DELAY_MS);
+      return false;
     },
   });
 
@@ -291,7 +315,7 @@ export function createWikilinksExtension(options: WikilinksOptions = {}): Extens
     },
   });
 
-  const exts: Extension[] = [field, clickHandler];
+  const exts: Extension[] = [field, compositionHandler, clickHandler];
 
   if (options.suggest) {
     exts.push(

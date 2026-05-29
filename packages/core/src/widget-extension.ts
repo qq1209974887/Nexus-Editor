@@ -2,6 +2,7 @@ import {
   type Extension,
   type Range,
   type SelectionRange,
+  StateEffect,
   StateField,
   type Transaction,
 } from "@codemirror/state";
@@ -9,6 +10,8 @@ import { Decoration, type DecorationSet, EditorView, ViewPlugin, WidgetType } fr
 import type { Content, Parent, Root } from "mdast";
 
 import type { ParserLike, WidgetDefinition, WidgetRenderContext } from "./types";
+
+const COMPOSITION_REDECORATE_DELAY_MS = 60;
 
 function createEmptyAst(): Root {
   return { type: "root", children: [] };
@@ -182,6 +185,7 @@ export function createWidgetExtension(
   if (widgets.length === 0) return [];
 
   const viewRef: { current: EditorView | null } = { current: null };
+  const rebuildAfterComposition = StateEffect.define<null>();
 
   const field = StateField.define<DecorationSet>({
     create(state) {
@@ -194,6 +198,18 @@ export function createWidgetExtension(
       );
     },
     update(decos: DecorationSet, tr: Transaction) {
+      if (tr.effects.some((effect) => effect.is(rebuildAfterComposition))) {
+        return buildWidgetDecorations(
+          tr.state.doc.toString(),
+          tr.state.selection.ranges,
+          parser,
+          widgets,
+          viewRef
+        );
+      }
+      if (tr.isUserEvent("input.type.compose")) {
+        return tr.docChanged ? decos.map(tr.changes) : decos;
+      }
       if (tr.docChanged || tr.selection) {
         return buildWidgetDecorations(
           tr.state.doc.toString(),
@@ -224,5 +240,19 @@ export function createWidgetExtension(
     }
   );
 
-  return [field, viewCapture];
+  const compositionHandler = EditorView.domEventHandlers({
+    compositionend(_event, view) {
+      setTimeout(() => {
+        if (view.compositionStarted) return;
+        try {
+          view.dispatch({ effects: rebuildAfterComposition.of(null) });
+        } catch {
+          // The view may have been destroyed before the deferred rebuild.
+        }
+      }, COMPOSITION_REDECORATE_DELAY_MS);
+      return false;
+    },
+  });
+
+  return [field, viewCapture, compositionHandler];
 }

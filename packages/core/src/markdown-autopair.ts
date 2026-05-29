@@ -18,6 +18,8 @@ const DOUBLE_PAIRS: Array<{ char: string; open: string; close: string }> = [
 
 export function markdownAutoPair(): Extension {
   return EditorView.inputHandler.of((view, from, to, text) => {
+    if (view.composing || view.compositionStarted) return false;
+
     const sel = view.state.selection.main;
 
     // --- Single-char pairs (backtick) ---
