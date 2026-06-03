@@ -60,7 +60,6 @@ describe('BacklinksPanel', () => {
     expect(header?.textContent).toContain('Backlinks');
     
     panel.destroy();
-    document.body.removeChild(panel.element);
   });
 
   it('should render unlinked mentions', () => {
@@ -85,7 +84,6 @@ describe('BacklinksPanel', () => {
     expect(content).toContain('Unlinked mentions');
     
     panel.destroy();
-    document.body.removeChild(panel.element);
   });
 
   it('should call onOpenFile when clicking an item', () => {
@@ -115,7 +113,6 @@ describe('BacklinksPanel', () => {
     }
     
     panel.destroy();
-    document.body.removeChild(panel.element);
   });
 
   it('should handle empty vault', () => {
@@ -134,6 +131,5 @@ describe('BacklinksPanel', () => {
     expect(panel.element.textContent).toContain('No active file');
     
     panel.destroy();
-    document.body.removeChild(panel.element);
   });
 });

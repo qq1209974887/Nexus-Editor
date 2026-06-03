@@ -46,8 +46,12 @@ describe('editCommands', () => {
   });
 
   it('should handle search command', () => {
-    const mockEditorAPI = {} as any;
-    const mockEditor = { getEditorAPI: vi.fn().mockReturnValue(mockEditorAPI) } as any;
+    const mockEditor = { 
+      getEditorAPI: vi.fn().mockReturnValue({
+        getSelection: vi.fn().mockReturnValue({ anchor: 0, head: 0 }),
+        getDocument: vi.fn().mockReturnValue('')
+      }) 
+    } as any;
     setEditor(mockEditor);
     
     document.body.innerHTML = '<div class="editor-column"></div>';
@@ -58,9 +62,13 @@ describe('editCommands', () => {
   });
 
   it('should handle settings command', () => {
-    const mockEditor = { setAttribute: vi.fn() } as any;
+    const mockEditor = { 
+      getEditorAPI: vi.fn().mockReturnValue({}) 
+    } as any;
     setEditor(mockEditor);
     
     handleSettings();
+    
+    expect(mockEditor.getEditorAPI).toHaveBeenCalled();
   });
 });

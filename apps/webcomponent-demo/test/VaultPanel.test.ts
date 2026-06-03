@@ -18,7 +18,7 @@ describe('VaultPanel', () => {
     });
     
     expect(panel.element).toBeInstanceOf(HTMLElement);
-    expect(panel.element.className).toBe('vault-panel');
+    expect(panel.element.className).toBe('nexus-vault-panel');
     
     panel.destroy();
   });
@@ -36,7 +36,6 @@ describe('VaultPanel', () => {
     expect(treeContainer).not.toBeNull();
     
     panel.destroy();
-    document.body.removeChild(panel.element);
   });
 
   it('should set active file', () => {

@@ -37,7 +37,6 @@ describe('OutlinePanel', () => {
     expect(emptyText).toContain('No headings');
     
     panel.destroy();
-    document.body.removeChild(panel.element);
   });
 
   it('should render headings from table of contents', () => {
@@ -55,7 +54,6 @@ describe('OutlinePanel', () => {
     expect(buttons[1].textContent).toBe('Heading 2');
     
     panel.destroy();
-    document.body.removeChild(panel.element);
   });
 
   it('should update when called', () => {
@@ -86,6 +84,5 @@ describe('OutlinePanel', () => {
     expect(mockEditorAPI.focus).toHaveBeenCalled();
     
     panel.destroy();
-    document.body.removeChild(panel.element);
   });
 });
