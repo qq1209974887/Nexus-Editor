@@ -252,6 +252,10 @@ export class NexusEditor extends HTMLElement {
     return this.editor?.exportHTML() ?? "";
   }
 
+  getEditorAPI(): EditorAPI | null {
+    return this.editor;
+  }
+
   destroy(): void {
     this.destroyEditor();
   }
